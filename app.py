@@ -13,35 +13,27 @@ st.markdown("""
         background: linear-gradient(135deg, #1e3a5f 0%, #2d6a9f 100%);
         padding: 20px 30px; border-radius: 12px; margin-bottom: 24px;
     }
-    .main-header h1 { margin: 0; font-size: 2rem; color: white; }
-    .main-header p  { margin: 4px 0 0; opacity: .85; color: white; }
+    .main-header h1 { margin:0; font-size:2rem; color:white; }
+    .main-header p  { margin:4px 0 0; opacity:.85; color:white; }
     .metric-card {
-        background: white; border-radius: 10px; padding: 18px 20px;
-        border-left: 5px solid #2d6a9f; box-shadow: 0 2px 8px rgba(0,0,0,.08); margin-bottom: 12px;
+        background:white; border-radius:10px; padding:18px 20px;
+        border-left:5px solid #2d6a9f; box-shadow:0 2px 8px rgba(0,0,0,.08); margin-bottom:12px;
     }
-    .metric-card h3 { margin: 0 0 4px; font-size: .82rem; color: #666; text-transform: uppercase; letter-spacing: .05em; }
-    .metric-card p  { margin: 0; font-size: 1.8rem; font-weight: 700; color: #1e3a5f; }
-    .metric-green   { border-left-color: #27ae60; }
-    .metric-red     { border-left-color: #e74c3c; }
-    .metric-orange  { border-left-color: #f39c12; }
+    .metric-card h3 { margin:0 0 4px; font-size:.82rem; color:#666; text-transform:uppercase; letter-spacing:.05em; }
+    .metric-card p  { margin:0; font-size:1.8rem; font-weight:700; color:#1e3a5f; }
+    .mc-green  { border-left-color:#27ae60; }
+    .mc-red    { border-left-color:#e74c3c; }
+    .mc-orange { border-left-color:#f39c12; }
     .badge-trainee   { background:#ffeaa7; color:#d35400; padding:3px 10px; border-radius:12px; font-weight:600; font-size:.82rem; }
     .badge-starter   { background:#a8e6cf; color:#1e8449; padding:3px 10px; border-radius:12px; font-weight:600; font-size:.82rem; }
     .badge-competent { background:#74b9ff; color:#1a5276; padding:3px 10px; border-radius:12px; font-weight:600; font-size:.82rem; }
     .badge-master    { background:#fd79a8; color:#6c1837; padding:3px 10px; border-radius:12px; font-weight:600; font-size:.82rem; }
-    .user-detail-card {
-        background: #f8fafc; border-radius: 10px; padding: 20px;
-        border: 1px solid #e2e8f0; margin-bottom: 16px;
-    }
-    .section-header {
-        background: #eef2f7; padding: 10px 16px; border-radius: 8px;
-        font-weight: 700; color: #1e3a5f; margin: 16px 0 10px;
-    }
-    .status-present { color: #27ae60; font-weight: 700; }
-    .status-off     { color: #e74c3c; font-weight: 700; }
+    .user-detail-card { background:#f8fafc; border-radius:10px; padding:20px; border:1px solid #e2e8f0; margin-bottom:16px; }
+    .section-header   { background:#eef2f7; padding:10px 16px; border-radius:8px; font-weight:700; color:#1e3a5f; margin:16px 0 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Occupation keywords: which job titles belong to each report type ───────────
+# ── Occupation keywords ────────────────────────────────────────────────────────
 OCCUPATION_KEYWORDS = {
     "Picking":   ["picker"],
     "Packing":   ["packer", "sealer", "packing"],
@@ -50,21 +42,15 @@ OCCUPATION_KEYWORDS = {
 }
 
 def matches_occupation(occupation, report_type):
-    """Return True if the employee occupation matches the report type."""
     if not occupation or str(occupation).strip() in ["-", "", "nan"]:
         return False
     occ_lower = str(occupation).lower()
-    keywords  = OCCUPATION_KEYWORDS.get(report_type, [])
-    return any(kw in occ_lower for kw in keywords)
+    return any(kw in occ_lower for kw in OCCUPATION_KEYWORDS.get(report_type, []))
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
 def get_occupation_level(hire_date_raw):
     try:
-        if pd.isna(hire_date_raw):
-            return "Trainee"
-        hire   = pd.to_datetime(hire_date_raw)
-        days   = (pd.Timestamp.today() - hire).days
-        months = days / 30.44
+        if pd.isna(hire_date_raw): return "Trainee"
+        months = (pd.Timestamp.today() - pd.to_datetime(hire_date_raw)).days / 30.44
         if months >= 6:   return "Master"
         elif months >= 3: return "Competent"
         elif months >= 1: return "Starter"
@@ -74,32 +60,26 @@ def get_occupation_level(hire_date_raw):
 
 def badge_html(level):
     lvl = str(level).lower()
-    if lvl not in ["trainee","starter","competent","master"]:
-        lvl = "trainee"
+    if lvl not in ["trainee","starter","competent","master"]: lvl = "trainee"
     return f'<span class="badge-{lvl}">{level}</span>'
 
+# ── Parse Man Hours Excel ──────────────────────────────────────────────────────
 def parse_man_hours(f):
     df_raw    = pd.read_excel(f, header=None)
     day_row   = df_raw.iloc[8].tolist()
     col_names = df_raw.iloc[9].tolist()
-
-    cols        = []
-    current_day = ""
-    day_slots   = ["In", "Out", "Man Hrs", "Missing"]
-    day_labels_found = []
+    cols = []; current_day = ""; day_labels_found = []
+    day_slots = ["In","Out","Man Hrs","Missing"]
 
     for i, val in enumerate(col_names):
         dv = day_row[i]
-        if isinstance(dv, str) and dv.strip():
+        if isinstance(dv, str) and dv.strip() and dv.strip() != "Period Totals":
             current_day = dv.strip()
-            if current_day not in day_labels_found and current_day != "Period Totals":
+            if current_day not in day_labels_found:
                 day_labels_found.append(current_day)
         if isinstance(val, str) and val.strip():
             name = val.strip()
-            if name in day_slots and current_day:
-                cols.append(f"{current_day}_{name}")
-            else:
-                cols.append(name)
+            cols.append(f"{current_day}_{name}" if name in day_slots and current_day else name)
         else:
             cols.append(f"col_{i}")
 
@@ -110,27 +90,35 @@ def parse_man_hours(f):
     data = data[~data["Name Surname"].str.strip().eq("Total")].copy()
     data["Hire Date"]        = pd.to_datetime(data["Hire Date"], errors="coerce")
     data["Occupation Level"] = data["Hire Date"].apply(get_occupation_level)
-
-    def weeks_on_site(hd):
-        try:
-            if pd.isna(hd): return 0
-            return max(0, round((pd.Timestamp.today() - pd.to_datetime(hd)).days / 7, 1))
-        except:
-            return 0
-    data["Weeks On Site"] = data["Hire Date"].apply(weeks_on_site)
-
-    # Parse man hours per day as float
+    data["Weeks On Site"]    = data["Hire Date"].apply(
+        lambda hd: max(0, round((pd.Timestamp.today() - pd.to_datetime(hd)).days / 7, 1))
+        if pd.notna(hd) else 0
+    )
     for d in day_labels_found:
-        mh_col = f"{d}_Man Hrs"
-        in_col = f"{d}_In"
-        if mh_col in data.columns:
-            data[f"{d}_hrs"] = pd.to_numeric(data[mh_col], errors="coerce").fillna(0)
-        else:
-            data[f"{d}_hrs"] = 0.0
-
+        col = f"{d}_Man Hrs"
+        data[f"{d}_hrs"] = pd.to_numeric(data[col], errors="coerce").fillna(0) if col in data.columns else 0.0
     return data, day_labels_found
 
+# ── Parse Rate CSV from ZIP ────────────────────────────────────────────────────
 def parse_rate_csv(f, report_type):
+    """
+    Handles 3 CSV layouts found in the zip reports:
+
+    Picking / Packing:
+      Row header_row : User | Hour | NaN  | 2 | 3 | 4 | ... | 14
+      Data rows      : user | NaN  | Total| units_h2 | units_h3 | ...
+      -> Total is at col 2, hours at cols 3+
+
+    Putaway:
+      Row header_row : create_user | Create Hour | Total | 7 | 8 | ... | 14
+      Data rows      : user | NaN | Total | units_h7 | ...
+      -> Total is at col 2, hours at cols 3+
+
+    Receiving:
+      Row header_row : User | Hour | 7 | 8 | ... | 14 | Total for day | NaN
+      Data rows      : user | NaN  | units_h7 | units_h8 | ... | Total | Total
+      -> Hours start at col 2, Total at col 10 (last valid col)
+    """
     df_raw     = pd.read_csv(f, header=None)
     header_row = None
     date_val   = None
@@ -138,114 +126,137 @@ def parse_rate_csv(f, report_type):
 
     for i, row in df_raw.iterrows():
         r = row.tolist()
-        if "User" in str(r[0]) or "create_user" in str(r[0]):
+        if str(r[0]).strip().lower() in ["user", "create_user"]:
             header_row = i
         for cell in r:
-            cell_str = str(cell)
-            if "/" in cell_str and len(cell_str) == 10:
-                try:    date_val = pd.to_datetime(cell)
+            cs = str(cell).strip()
+            if "Target" in cs and "=" in cs:
+                target_val = cs
+            if len(cs) == 10 and cs.count("/") == 2:
+                try: date_val = pd.to_datetime(cs)
                 except: pass
-            if "Target" in cell_str and "=" in cell_str:
-                target_val = cell_str.strip()
 
     if header_row is None:
         return pd.DataFrame(), date_val, target_val, []
 
-    hour_row  = df_raw.iloc[header_row - 1].tolist() if header_row > 0 else []
-    base_cols = ["username", "Hour", "Total"]
-    hour_cols = []
-    hour_names = []  # clean hour labels e.g. "2", "3", "14"
+    hdr = df_raw.iloc[header_row].tolist()   # the actual header row
 
-    for i in range(3, len(df_raw.columns)):
-        hv     = hour_row[i] if i < len(hour_row) else ""
-        hv_str = str(hv).replace(".0","").strip()
-        if hv_str not in ["", "nan"]:
-            hour_cols.append(f"h_{hv_str}")
-            hour_names.append(hv_str)
+    # Detect layout: is col 2 a numeric hour or "Total"/NaN?
+    col2_str = str(hdr[2]).replace(".0","").strip()
+    try:
+        int(float(col2_str))
+        col2_is_hour = True   # Receiving layout
+    except:
+        col2_is_hour = False  # Picking/Packing/Putaway layout
+
+    hour_col_map = {}   # column_index -> hour_label (e.g. "7", "8", "14")
+    total_col_idx = None
+
+    if col2_is_hour:
+        # Receiving: hours from col 2, Total toward the end
+        for i in range(2, len(hdr)):
+            hs = str(hdr[i]).replace(".0","").strip()
+            try:
+                hour_num = int(float(hs))
+                hour_col_map[i] = str(hour_num)
+            except:
+                if "total" in hs.lower() and total_col_idx is None:
+                    total_col_idx = i
+    else:
+        # Picking / Packing / Putaway: Total at col 2, hours from col 3
+        total_col_idx = 2
+        for i in range(3, len(hdr)):
+            hs = str(hdr[i]).replace(".0","").strip()
+            try:
+                hour_num = int(float(hs))
+                hour_col_map[i] = str(hour_num)
+            except:
+                pass
+
+    # Build column names for the dataframe
+    all_cols = ["username", "_label"]
+    for i in range(2, len(hdr)):
+        if i in hour_col_map:
+            all_cols.append(f"h_{hour_col_map[i]}")
+        elif i == total_col_idx:
+            all_cols.append("Total")
         else:
-            hour_cols.append(f"h_col{i}")
-            hour_names.append("")
+            all_cols.append(f"_skip_{i}")
 
-    all_cols = base_cols + hour_cols
-    data     = df_raw.iloc[header_row + 1:].copy()
-    data.columns = all_cols[:len(data.columns)]
+    data = df_raw.iloc[header_row + 1:].copy()
+    n    = min(len(data.columns), len(all_cols))
+    data = data.iloc[:, :n]
+    data.columns = all_cols[:n]
+
+    # Clean rows
     data = data[data["username"].notna()].copy()
-    data = data[~data["username"].astype(str).str.lower().str.strip().eq("total")].copy()
-    data["Total"] = pd.to_numeric(data["Total"], errors="coerce").fillna(0)
+    data = data[~data["username"].astype(str).str.lower().str.strip().isin(["total","nan"])].copy()
+
+    # Convert hour columns to numeric
+    hour_cols = [c for c in data.columns if c.startswith("h_")]
     for hc in hour_cols:
-        if hc in data.columns:
-            data[hc] = pd.to_numeric(data[hc], errors="coerce").fillna(0)
+        data[hc] = pd.to_numeric(data[hc], errors="coerce").fillna(0)
+
+    # Always recalculate Total from hour columns (more reliable)
+    data["Total"] = data[hour_cols].sum(axis=1)
+
+    # Active hours = number of hours where the worker produced > 0 units
+    data["_active_hrs"] = (data[hour_cols] > 0).sum(axis=1)
+
     data["report_type"] = report_type
     data["report_date"] = date_val if date_val else pd.Timestamp.today().normalize()
-    return data, date_val, target_val, hour_names
+
+    sorted_hours = [hour_col_map[k] for k in sorted(hour_col_map.keys())]
+    return data, date_val, target_val, sorted_hours
 
 def load_zip_csv(uploaded_file, report_type):
     with zipfile.ZipFile(io.BytesIO(uploaded_file.read())) as z:
         with z.open(z.namelist()[0]) as f:
             return parse_rate_csv(f, report_type)
 
+# ── Compute UPH (hours from zip, occupation-filtered) ─────────────────────────
 def compute_uph(rate_data, man_hours_data):
-    """
-    Calculate UPH only for employees whose occupation matches the report type.
-    Pickers -> Picking, Packers -> Packing, Receivers -> Receiving, Putaway/Fillers -> Putaway
-    """
     if rate_data.empty or man_hours_data.empty:
         return pd.DataFrame()
-
-    uph_rows = []
-    skipped  = 0
-
+    rows = []
     for _, row in rate_data.iterrows():
         username    = str(row["username"]).strip().lower()
         total_units = row["Total"]
         rt          = row["report_type"]
         rd          = row["report_date"]
+        active_hrs  = max(row.get("_active_hrs", 1), 1)
 
         mh_match = man_hours_data[
             man_hours_data["Cust-Oracle Username"].astype(str).str.strip().str.lower() == username
         ]
-        if mh_match.empty:
-            continue
+        if mh_match.empty: continue
 
         mh         = mh_match.iloc[0]
         occupation = mh.get("Occupation", "")
+        if not matches_occupation(occupation, rt): continue
 
-        # Only include if occupation matches report type
-        if not matches_occupation(occupation, rt):
-            skipped += 1
-            continue
-
-        # Get hours worked that day
-        day_hrs = next(
-            (mh.get(c, 0) for c in man_hours_data.columns if "_hrs" in c and mh.get(c, 0) > 0),
-            8.0
-        )
-
-        uph_rows.append({
+        rows.append({
             "username":         username,
-            "Name Surname":     mh.get("Name Surname", ""),
-            "Company":          mh.get("Company Name", ""),
+            "Name Surname":     mh.get("Name Surname",""),
+            "Company":          mh.get("Company Name",""),
             "Occupation":       occupation,
-            "Department":       mh.get("Department", ""),
-            "Hire Date":        mh.get("Hire Date", ""),
+            "Department":       mh.get("Department",""),
+            "Hire Date":        mh.get("Hire Date",""),
             "Weeks On Site":    mh.get("Weeks On Site", 0),
-            "Occupation Level": mh.get("Occupation Level", "Trainee"),
+            "Occupation Level": mh.get("Occupation Level","Trainee"),
             "Report Type":      rt,
             "Report Date":      rd,
             "Total Units":      total_units,
-            "Hours Worked":     day_hrs,
-            "UPH":              round(total_units / day_hrs, 1) if day_hrs > 0 else 0,
+            "Active Hours":     active_hrs,
+            "UPH":              round(total_units / active_hrs, 1),
         })
-
-    return pd.DataFrame(uph_rows)
+    return pd.DataFrame(rows)
 
 # ── Session state ──────────────────────────────────────────────────────────────
 for key, default in [
-    ("man_hours_df",  None),
-    ("day_labels",    []),
-    ("rate_dfs",      []),
-    ("rate_meta",     {}),
-    ("uph_df",        pd.DataFrame()),
+    ("man_hours_df", None), ("day_labels", []),
+    ("rate_dfs", []),       ("rate_meta", {}),
+    ("uph_df", pd.DataFrame()),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -254,48 +265,44 @@ for key, default in [
 st.markdown("""
 <div class="main-header">
   <h1>DC Performance Dashboard</h1>
-  <p>Man Hours | Units Per Hour | Occupation Levels | Daily and Weekly Tracking</p>
+  <p>Man Hours | Units Per Hour | Occupation Levels | Daily Tracking</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### Upload Daily Files")
-    mh_file   = st.file_uploader("Auto Man Hours Report (.xlsx)", type=["xlsx"], key="mh")
-    pick_file = st.file_uploader("Picking Rate Report (.zip)",    type=["zip"],  key="pick")
-    pack_file = st.file_uploader("Packing Rate Report (.zip)",    type=["zip"],  key="pack")
-    put_file  = st.file_uploader("Putaway Rate Report (.zip)",    type=["zip"],  key="put")
-    recv_file = st.file_uploader("Receiving Rate Report (.zip)",  type=["zip"],  key="recv")
+    mh_file   = st.file_uploader("Auto Man Hours (.xlsx)", type=["xlsx"], key="mh")
+    pick_file = st.file_uploader("Picking Rate (.zip)",    type=["zip"],  key="pick")
+    pack_file = st.file_uploader("Packing Rate (.zip)",    type=["zip"],  key="pack")
+    put_file  = st.file_uploader("Putaway Rate (.zip)",    type=["zip"],  key="put")
+    recv_file = st.file_uploader("Receiving Rate (.zip)",  type=["zip"],  key="recv")
     process_btn = st.button("Process Files", use_container_width=True, type="primary")
 
     if process_btn:
         with st.spinner("Processing..."):
-            errors      = []
-            rate_frames = []
-            rate_meta   = {}
+            errors = []; rate_frames = []; rate_meta = {}
 
             if mh_file:
                 try:
                     mh_df, day_lbls = parse_man_hours(mh_file)
                     st.session_state.man_hours_df = mh_df
                     st.session_state.day_labels   = day_lbls
-                    st.success(f"Man Hours: {len(mh_df)} employees | Days: {len(day_lbls)}")
+                    st.success(f"Man Hours: {len(mh_df)} employees")
                 except Exception as e:
-                    errors.append(f"Man Hours error: {e}")
+                    errors.append(f"Man Hours: {e}")
 
-            for file_obj, rtype in [
-                (pick_file,"Picking"),(pack_file,"Packing"),
-                (put_file,"Putaway"),(recv_file,"Receiving")
-            ]:
+            for file_obj, rtype in [(pick_file,"Picking"),(pack_file,"Packing"),
+                                    (put_file,"Putaway"),(recv_file,"Receiving")]:
                 if file_obj:
                     try:
-                        df, dv, target, hour_names = load_zip_csv(file_obj, rtype)
+                        df, dv, target, hours = load_zip_csv(file_obj, rtype)
                         if not df.empty:
                             rate_frames.append(df)
-                            rate_meta[rtype] = {"date": dv, "target": target, "hour_names": hour_names}
-                            st.success(f"{rtype}: {len(df)} users")
+                            rate_meta[rtype] = {"date": dv, "target": target, "hours": hours}
+                            st.success(f"{rtype}: {len(df)} users | Hours: {hours}")
                     except Exception as e:
-                        errors.append(f"{rtype} error: {e}")
+                        errors.append(f"{rtype}: {e}")
 
             if rate_frames:
                 st.session_state.rate_dfs  = rate_frames
@@ -303,541 +310,376 @@ with st.sidebar:
                 all_rates = pd.concat(rate_frames, ignore_index=True)
                 if st.session_state.man_hours_df is not None:
                     st.session_state.uph_df = compute_uph(all_rates, st.session_state.man_hours_df)
-                    st.success(f"UPH calculated for {len(st.session_state.uph_df)} matched workers")
+                    st.success(f"UPH: {len(st.session_state.uph_df)} matched workers")
 
-            for e in errors:
-                st.error(e)
+            for e in errors: st.error(e)
 
+    st.markdown("---")
+    st.markdown("**UPH uses active hours from the rate files**")
+    st.markdown("Active hours = hours where units > 0")
     st.markdown("---")
     st.markdown("**Occupation matching:**")
-    st.markdown("Picking report = Pickers only")
-    st.markdown("Packing report = Packers only")
-    st.markdown("Receiving report = Receivers only")
-    st.markdown("Putaway report = Putaway / Fillers only")
+    for rt, kws in OCCUPATION_KEYWORDS.items():
+        st.markdown(f"{rt}: {', '.join(kws)}")
     st.markdown("---")
-    st.markdown("**Occupation Levels:**")
-    st.markdown("Trainee = up to 2 weeks")
-    st.markdown("Starter = more than 1 month")
-    st.markdown("Competent = 3 months or more")
-    st.markdown("Master = 6 months or more")
+    st.markdown("**Levels:** Trainee < 2w | Starter > 1m | Competent 3m+ | Master 6m+")
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Overview",
-    "User Detail",
-    "Daily Hours",
-    "Leaderboard",
-    "Days Rate Detail"
+    "Overview", "User Detail", "Daily Hours", "Leaderboard", "Days Rate Detail"
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 1 - OVERVIEW: Show who signed in/out, who was off
+# TAB 1 - OVERVIEW: who signed in vs who was off
 # ══════════════════════════════════════════════════════════════════════════════
 with tab1:
-    mh         = st.session_state.man_hours_df
+    mh = st.session_state.man_hours_df
     day_labels = st.session_state.day_labels
 
     if mh is None:
         st.info("Upload files and click Process Files to get started.")
     else:
-        st.markdown('<div class="section-header">Select a Day to View Attendance</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">Select Day to View Attendance</div>', unsafe_allow_html=True)
+        selected_day = st.selectbox("Day", day_labels if day_labels else ["No days found"])
+        in_col  = f"{selected_day}_In"
+        out_col = f"{selected_day}_Out"
+        hrs_col = f"{selected_day}_hrs"
 
-        if not day_labels:
-            st.warning("No day columns found in the man hours file.")
+        if in_col in mh.columns:
+            present_mask = mh[in_col].notna() & (~mh[in_col].astype(str).str.strip().isin(["","nan","NaT"]))
+            present_df   = mh[present_mask].copy()
+            absent_df    = mh[~present_mask].copy()
         else:
-            selected_day = st.selectbox("Day", day_labels, key="overview_day")
-            in_col  = f"{selected_day}_In"
-            out_col = f"{selected_day}_Out"
-            mh_col  = f"{selected_day}_Man Hrs"
+            present_df = pd.DataFrame(); absent_df = mh.copy()
 
-            # Split present vs off
-            if in_col in mh.columns:
-                present_mask = mh[in_col].notna() & (mh[in_col].astype(str).str.strip() != "") & (mh[in_col].astype(str).str.strip() != "nan")
-                present_df   = mh[present_mask].copy()
-                absent_df    = mh[~present_mask].copy()
-            else:
-                present_df = pd.DataFrame()
-                absent_df  = mh.copy()
+        uph = st.session_state.uph_df
+        k1, k2, k3, k4 = st.columns(4)
+        total_hrs_day = present_df[hrs_col].sum() if hrs_col in present_df.columns and not present_df.empty else 0
+        avg_uph       = uph["UPH"].mean() if not uph.empty else 0
+        with k1: st.markdown(f'<div class="metric-card mc-green"><h3>Signed In</h3><p>{len(present_df)}</p></div>', unsafe_allow_html=True)
+        with k2: st.markdown(f'<div class="metric-card mc-red"><h3>Off / Absent</h3><p>{len(absent_df)}</p></div>', unsafe_allow_html=True)
+        with k3: st.markdown(f'<div class="metric-card"><h3>Hours Clocked</h3><p>{total_hrs_day:.0f} hrs</p></div>', unsafe_allow_html=True)
+        with k4: st.markdown(f'<div class="metric-card mc-orange"><h3>Avg UPH</h3><p>{avg_uph:.1f}</p></div>', unsafe_allow_html=True)
 
-            # KPI row
-            uph = st.session_state.uph_df
-            k1, k2, k3, k4 = st.columns(4)
-            with k1:
-                st.markdown(f'<div class="metric-card metric-green"><h3>Signed In Today</h3><p>{len(present_df)}</p></div>', unsafe_allow_html=True)
-            with k2:
-                st.markdown(f'<div class="metric-card metric-red"><h3>Absent / Off</h3><p>{len(absent_df)}</p></div>', unsafe_allow_html=True)
-            with k3:
-                total_hrs = 0
-                if not present_df.empty and mh_col in present_df.columns:
-                    hrs_col = f"{selected_day}_hrs"
-                    if hrs_col in present_df.columns:
-                        total_hrs = present_df[hrs_col].sum()
-                st.markdown(f'<div class="metric-card"><h3>Total Hours Clocked</h3><p>{total_hrs:.0f} hrs</p></div>', unsafe_allow_html=True)
-            with k4:
-                avg_uph = uph["UPH"].mean() if not uph.empty else 0
-                st.markdown(f'<div class="metric-card metric-orange"><h3>Avg UPH (Matched)</h3><p>{avg_uph:.1f}</p></div>', unsafe_allow_html=True)
+        # Signed in table
+        st.markdown(f'<div class="section-header">Signed In - {selected_day} ({len(present_df)} employees)</div>', unsafe_allow_html=True)
+        if not present_df.empty:
+            dept_ov = st.selectbox("Filter by Department", ["All"] + sorted(mh["Department"].dropna().unique().tolist()), key="ov_dept")
+            show_p  = present_df[["Cust-Oracle Username","Name Surname","Company Name","Department","Occupation","Occupation Level","Weeks On Site"]].copy()
+            if in_col  in present_df.columns: show_p["Sign In"]      = present_df[in_col].astype(str)
+            if out_col in present_df.columns: show_p["Sign Out"]     = present_df[out_col].astype(str)
+            if hrs_col in present_df.columns: show_p["Hours Worked"] = present_df[hrs_col].round(2)
+            show_p = show_p.rename(columns={"Cust-Oracle Username":"Username","Name Surname":"Full Name","Company Name":"Company","Occupation Level":"Level","Weeks On Site":"Weeks"})
+            if dept_ov != "All": show_p = show_p[show_p["Department"] == dept_ov]
+            st.dataframe(show_p.reset_index(drop=True), use_container_width=True, hide_index=True)
 
-            # Present employees table
-            st.markdown(f'<div class="section-header">Signed In - {selected_day} ({len(present_df)} employees)</div>', unsafe_allow_html=True)
-            if not present_df.empty:
-                show_present = present_df[[
-                    "Cust-Oracle Username", "Name Surname", "Company Name",
-                    "Department", "Occupation", "Occupation Level", "Weeks On Site"
-                ]].copy()
-                if in_col in present_df.columns:
-                    show_present["Sign In"]  = present_df[in_col].astype(str)
-                if out_col in out_col and out_col in present_df.columns:
-                    show_present["Sign Out"] = present_df[out_col].astype(str)
-                hrs_col = f"{selected_day}_hrs"
-                if hrs_col in present_df.columns:
-                    show_present["Hours Worked"] = present_df[hrs_col].round(2)
-                show_present = show_present.rename(columns={
-                    "Cust-Oracle Username": "Username",
-                    "Name Surname":        "Full Name",
-                    "Company Name":        "Company",
-                    "Occupation Level":    "Level",
-                    "Weeks On Site":       "Weeks"
-                })
-                # Filter
-                dept_filter_ov = st.selectbox("Filter by Department",
-                    ["All"] + sorted(mh["Department"].dropna().unique().tolist()), key="ov_dept")
-                if dept_filter_ov != "All":
-                    show_present = show_present[show_present["Department"] == dept_filter_ov]
+            # Hours by department chart
+            if hrs_col in present_df.columns:
+                dept_hrs = present_df.groupby("Department")[hrs_col].sum().reset_index()
+                dept_hrs.columns = ["Department","Hours"]
+                dept_hrs = dept_hrs[dept_hrs["Hours"] > 0].sort_values("Hours", ascending=False)
+                if not dept_hrs.empty:
+                    st.markdown('<div class="section-header">Hours by Department</div>', unsafe_allow_html=True)
+                    ch = alt.Chart(dept_hrs).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, color="#2d6a9f").encode(
+                        x=alt.X("Hours:Q"), y=alt.Y("Department:N", sort="-x"), tooltip=["Department","Hours"]
+                    ).properties(height=max(200, len(dept_hrs)*30))
+                    st.altair_chart(ch, use_container_width=True)
 
-                st.dataframe(show_present.reset_index(drop=True), use_container_width=True, hide_index=True)
-
-                # Chart: hours worked by department
-                if hrs_col in present_df.columns:
-                    dept_hrs = present_df.groupby("Department")[hrs_col].sum().reset_index()
-                    dept_hrs.columns = ["Department","Hours"]
-                    dept_hrs = dept_hrs[dept_hrs["Hours"] > 0].sort_values("Hours", ascending=False)
-                    if not dept_hrs.empty:
-                        st.markdown('<div class="section-header">Hours by Department</div>', unsafe_allow_html=True)
-                        ch = alt.Chart(dept_hrs).mark_bar(
-                            cornerRadiusTopLeft=5, cornerRadiusTopRight=5, color="#2d6a9f"
-                        ).encode(
-                            x=alt.X("Hours:Q"),
-                            y=alt.Y("Department:N", sort="-x"),
-                            tooltip=["Department","Hours"]
-                        ).properties(height=300)
-                        st.altair_chart(ch, use_container_width=True)
-
-            # Absent employees
-            st.markdown(f'<div class="section-header">Off / Not Signed In - {selected_day} ({len(absent_df)} employees)</div>', unsafe_allow_html=True)
-            if not absent_df.empty:
-                show_absent = absent_df[[
-                    "Cust-Oracle Username","Name Surname","Company Name",
-                    "Department","Occupation","Occupation Level","Weeks On Site"
-                ]].rename(columns={
-                    "Cust-Oracle Username":"Username","Name Surname":"Full Name",
-                    "Company Name":"Company","Occupation Level":"Level","Weeks On Site":"Weeks"
-                }).reset_index(drop=True)
-                st.dataframe(show_absent, use_container_width=True, hide_index=True)
+        st.markdown(f'<div class="section-header">Off / Not Signed In - {selected_day} ({len(absent_df)} employees)</div>', unsafe_allow_html=True)
+        if not absent_df.empty:
+            show_a = absent_df[["Cust-Oracle Username","Name Surname","Company Name","Department","Occupation","Occupation Level","Weeks On Site"]].rename(columns={
+                "Cust-Oracle Username":"Username","Name Surname":"Full Name","Company Name":"Company","Occupation Level":"Level","Weeks On Site":"Weeks"
+            }).reset_index(drop=True)
+            st.dataframe(show_a, use_container_width=True, hide_index=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 - USER DETAIL
 # ══════════════════════════════════════════════════════════════════════════════
 with tab2:
     st.markdown('<div class="section-header">User Detail</div>', unsafe_allow_html=True)
-    mh  = st.session_state.man_hours_df
-    uph = st.session_state.uph_df
-    day_labels = st.session_state.day_labels
-
+    mh = st.session_state.man_hours_df; uph = st.session_state.uph_df; day_labels = st.session_state.day_labels
     if mh is None:
         st.info("Upload files and process them first.")
     else:
-        fc1, fc2, fc3 = st.columns(3)
-        with fc1: dept_filter = st.selectbox("Department", ["All"] + sorted(mh["Department"].dropna().unique().tolist()))
-        with fc2: comp_filter = st.selectbox("Company",    ["All"] + sorted(mh["Company Name"].dropna().unique().tolist()))
-        with fc3: lvl_filter  = st.selectbox("Level", ["All","Trainee","Starter","Competent","Master"])
-
-        display_mh = mh.copy()
-        if dept_filter != "All": display_mh = display_mh[display_mh["Department"] == dept_filter]
-        if comp_filter != "All": display_mh = display_mh[display_mh["Company Name"] == comp_filter]
-        if lvl_filter  != "All": display_mh = display_mh[display_mh["Occupation Level"] == lvl_filter]
-
+        fc1,fc2,fc3 = st.columns(3)
+        with fc1: dept_f = st.selectbox("Department", ["All"] + sorted(mh["Department"].dropna().unique().tolist()))
+        with fc2: comp_f = st.selectbox("Company",    ["All"] + sorted(mh["Company Name"].dropna().unique().tolist()))
+        with fc3: lvl_f  = st.selectbox("Level",      ["All","Trainee","Starter","Competent","Master"])
+        dm = mh.copy()
+        if dept_f != "All": dm = dm[dm["Department"] == dept_f]
+        if comp_f != "All": dm = dm[dm["Company Name"] == comp_f]
+        if lvl_f  != "All": dm = dm[dm["Occupation Level"] == lvl_f]
         if not uph.empty:
-            uph_pivot = uph.groupby("username").agg(
-                UPH=("UPH","mean"),
-                Report_Type=("Report Type", lambda x: ", ".join(x.unique()))
-            ).reset_index()
-            uph_pivot["UPH"] = uph_pivot["UPH"].round(1)
-            display_mh = display_mh.merge(uph_pivot, left_on="Cust-Oracle Username", right_on="username", how="left")
-
-        show_cols = ["Cust-Oracle Username","Name Surname","Company Name","Department",
-                     "Occupation","Occupation Level","Weeks On Site","Hire Date"]
-        if "UPH" in display_mh.columns:
-            show_cols += ["UPH","Report_Type"]
-
+            up2 = uph.groupby("username").agg(UPH=("UPH","mean"), Report_Type=("Report Type", lambda x: ", ".join(x.unique()))).reset_index()
+            up2["UPH"] = up2["UPH"].round(1)
+            dm = dm.merge(up2, left_on="Cust-Oracle Username", right_on="username", how="left")
+        sc = ["Cust-Oracle Username","Name Surname","Company Name","Department","Occupation","Occupation Level","Weeks On Site","Hire Date"]
+        if "UPH" in dm.columns: sc += ["UPH","Report_Type"]
         search = st.text_input("Search by name or username")
         if search:
-            display_mh = display_mh[
-                display_mh["Name Surname"].astype(str).str.lower().str.contains(search.lower()) |
-                display_mh["Cust-Oracle Username"].astype(str).str.lower().str.contains(search.lower())
-            ]
-
-        st.markdown(f"**{len(display_mh)} employees**")
-        final_table = display_mh[show_cols].rename(columns={
-            "Cust-Oracle Username":"Username","Name Surname":"Full Name",
-            "Company Name":"Company","Occupation Level":"Level",
-            "Weeks On Site":"Weeks","Report_Type":"Role(s)"
-        }).reset_index(drop=True)
-        final_table["Hire Date"] = pd.to_datetime(final_table["Hire Date"], errors="coerce").dt.strftime("%Y-%m-%d")
-        st.dataframe(final_table, use_container_width=True, hide_index=True)
+            dm = dm[dm["Name Surname"].astype(str).str.lower().str.contains(search.lower()) | dm["Cust-Oracle Username"].astype(str).str.lower().str.contains(search.lower())]
+        st.markdown(f"**{len(dm)} employees**")
+        ft = dm[sc].rename(columns={"Cust-Oracle Username":"Username","Name Surname":"Full Name","Company Name":"Company","Occupation Level":"Level","Weeks On Site":"Weeks","Report_Type":"Role(s)"}).reset_index(drop=True)
+        ft["Hire Date"] = pd.to_datetime(ft["Hire Date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        st.dataframe(ft, use_container_width=True, hide_index=True)
 
         st.markdown("---")
-        st.markdown('<div class="section-header">Individual User Detail</div>', unsafe_allow_html=True)
-        username_input = st.text_input("Enter Username to see full profile:")
-        if username_input:
-            user_mh = mh[mh["Cust-Oracle Username"].astype(str).str.lower().str.strip() == username_input.lower().strip()]
-            if user_mh.empty:
-                st.warning(f"No employee found with username: {username_input}")
+        st.markdown('<div class="section-header">Individual User Profile</div>', unsafe_allow_html=True)
+        uname = st.text_input("Enter Username:")
+        if uname:
+            um = mh[mh["Cust-Oracle Username"].astype(str).str.lower().str.strip() == uname.lower().strip()]
+            if um.empty:
+                st.warning(f"No employee: {uname}")
             else:
-                row   = user_mh.iloc[0]
-                level = row.get("Occupation Level", "Trainee")
+                row = um.iloc[0]; level = row.get("Occupation Level","Trainee")
                 st.markdown(f"""
                 <div class="user-detail-card">
                   <h2 style="margin:0 0 8px;">{row.get("Name Surname","")}</h2>
-                  <p><b>Username:</b> {row.get("Cust-Oracle Username","")}</p>
-                  <p><b>Company:</b> {row.get("Company Name","")}</p>
-                  <p><b>Department:</b> {row.get("Department","")}</p>
-                  <p><b>Occupation:</b> {row.get("Occupation","")}</p>
-                  <p><b>Hire Date:</b> {str(row.get("Hire Date",""))[:10]}</p>
-                  <p><b>Years of Service:</b> {row.get("Years of Service (Yrs/Mths)","")}</p>
-                  <p><b>Weeks on Site:</b> {row.get("Weeks On Site", 0)} &nbsp; <b>Level:</b> {badge_html(level)}</p>
+                  <p><b>Username:</b> {row.get("Cust-Oracle Username","")}&nbsp;&nbsp;<b>Company:</b> {row.get("Company Name","")}&nbsp;&nbsp;<b>Department:</b> {row.get("Department","")}</p>
+                  <p><b>Occupation:</b> {row.get("Occupation","")}&nbsp;&nbsp;<b>Hire Date:</b> {str(row.get("Hire Date",""))[:10]}&nbsp;&nbsp;<b>Service:</b> {row.get("Years of Service (Yrs/Mths)","")}</p>
+                  <p><b>Weeks on Site:</b> {row.get("Weeks On Site",0)}&nbsp;&nbsp;<b>Level:</b> {badge_html(level)}</p>
                 </div>
                 """, unsafe_allow_html=True)
-
-                if day_labels:
-                    hrs_data  = []
-                    total_hrs = 0
-                    for d in day_labels:
-                        col = f"{d}_hrs"
-                        v   = row.get(col, 0) if col in row.index else 0
-                        if pd.isna(v): v = 0
-                        hrs_data.append({"Day": d, "Hours": float(v)})
-                        total_hrs += float(v)
-                    hrs_df = pd.DataFrame(hrs_data)
-
-                    st.markdown('<div class="section-header">Hours Worked This Week</div>', unsafe_allow_html=True)
-                    hr_chart = alt.Chart(hrs_df).mark_bar(
-                        cornerRadiusTopLeft=5, cornerRadiusTopRight=5, color="#2d6a9f"
-                    ).encode(x="Day:N", y="Hours:Q", tooltip=["Day","Hours"]).properties(height=220)
-                    st.altair_chart(hr_chart, use_container_width=True)
-                    c1, c2 = st.columns(2)
-                    n_days = len(day_labels) if day_labels else 7
-                    c1.metric("Total Hours This Week", f"{total_hrs:.1f} hrs")
-                    c2.metric("Avg Daily Hours",       f"{total_hrs/n_days:.1f} hrs")
-
+                hrs_data = []; total_hrs = 0
+                for d in day_labels:
+                    v = row.get(f"{d}_hrs", 0); v = 0 if pd.isna(v) else float(v)
+                    hrs_data.append({"Day": d, "Hours": v}); total_hrs += v
+                hrs_df = pd.DataFrame(hrs_data)
+                st.markdown('<div class="section-header">Hours Worked This Week</div>', unsafe_allow_html=True)
+                st.altair_chart(alt.Chart(hrs_df).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, color="#2d6a9f").encode(x="Day:N", y="Hours:Q", tooltip=["Day","Hours"]).properties(height=220), use_container_width=True)
+                c1,c2 = st.columns(2)
+                c1.metric("Total Hours", f"{total_hrs:.1f} hrs")
+                c2.metric("Avg Daily",   f"{total_hrs/max(len(day_labels),1):.1f} hrs")
                 if not uph.empty:
-                    user_uph = uph[uph["username"].str.lower() == username_input.lower()]
-                    if not user_uph.empty:
+                    uu = uph[uph["username"].str.lower() == uname.lower()]
+                    if not uu.empty:
                         st.markdown('<div class="section-header">Units Per Hour Performance</div>', unsafe_allow_html=True)
-                        uph_show = user_uph[["Report Type","Total Units","Hours Worked","UPH","Report Date"]].copy()
-                        uph_show["Report Date"] = pd.to_datetime(uph_show["Report Date"]).dt.strftime("%Y-%m-%d")
-                        st.dataframe(uph_show, use_container_width=True, hide_index=True)
+                        us = uu[["Report Type","Total Units","Active Hours","UPH","Report Date"]].copy()
+                        us["Report Date"] = pd.to_datetime(us["Report Date"]).dt.strftime("%Y-%m-%d")
+                        st.dataframe(us, use_container_width=True, hide_index=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 - DAILY HOURS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab3:
     st.markdown('<div class="section-header">Daily and Weekly Hours Tracker</div>', unsafe_allow_html=True)
-    mh         = st.session_state.man_hours_df
-    day_labels = st.session_state.day_labels
-
+    mh = st.session_state.man_hours_df; day_labels = st.session_state.day_labels
     if mh is None:
         st.info("Upload files and process them first.")
     else:
-        dept_sel = st.selectbox("Filter by Department",
-            ["All"] + sorted(mh["Department"].dropna().unique().tolist()), key="daily_dept")
-        disp = mh.copy()
-        if dept_sel != "All":
-            disp = disp[disp["Department"] == dept_sel]
-
+        dept_sel = st.selectbox("Department", ["All"] + sorted(mh["Department"].dropna().unique().tolist()), key="daily_dept")
+        disp = mh[mh["Department"] == dept_sel].copy() if dept_sel != "All" else mh.copy()
         records = []
         for _, r in disp.iterrows():
-            row_data = {
-                "Username": r.get("Cust-Oracle Username",""),
-                "Name":     r.get("Name Surname",""),
-                "Company":  r.get("Company Name",""),
-                "Level":    r.get("Occupation Level","")
-            }
-            wk_total = 0
+            rd = {"Username":r.get("Cust-Oracle Username",""),"Name":r.get("Name Surname",""),"Company":r.get("Company Name",""),"Level":r.get("Occupation Level","")}
+            wt = 0
             for d in day_labels:
-                col = f"{d}_hrs"
-                v   = r.get(col, 0) if col in r.index else 0
-                if pd.isna(v): v = 0
-                row_data[d] = round(float(v), 2)
-                wk_total   += float(v)
-            row_data["Weekly Total"] = round(wk_total, 2)
-            records.append(row_data)
-
-        hours_table = pd.DataFrame(records)
-        hours_table = hours_table[hours_table["Weekly Total"] > 0].sort_values("Weekly Total", ascending=False)
-        st.markdown(f"**{len(hours_table)} employees with recorded hours**")
-        st.dataframe(hours_table, use_container_width=True, hide_index=True)
-
+                v = r.get(f"{d}_hrs", 0); v = 0 if pd.isna(v) else float(v)
+                rd[d] = round(v, 2); wt += v
+            rd["Weekly Total"] = round(wt, 2)
+            records.append(rd)
+        ht = pd.DataFrame(records)
+        ht = ht[ht["Weekly Total"] > 0].sort_values("Weekly Total", ascending=False)
+        st.markdown(f"**{len(ht)} employees with recorded hours**")
+        st.dataframe(ht, use_container_width=True, hide_index=True)
         if day_labels:
             st.markdown('<div class="section-header">Daily Total Hours Across Team</div>', unsafe_allow_html=True)
-            daily_totals = [
-                {"Day": d, "Total Hours": hours_table[d].sum()}
-                for d in day_labels if d in hours_table.columns
-            ]
-            dt_df = pd.DataFrame(daily_totals)
-            day_chart = alt.Chart(dt_df).mark_bar(
-                cornerRadiusTopLeft=5, cornerRadiusTopRight=5, color="#27ae60"
-            ).encode(x="Day:N", y="Total Hours:Q", tooltip=["Day","Total Hours"]).properties(height=260)
-            st.altair_chart(day_chart, use_container_width=True)
+            dt_df = pd.DataFrame([{"Day": d, "Total Hours": ht[d].sum()} for d in day_labels if d in ht.columns])
+            st.altair_chart(alt.Chart(dt_df).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, color="#27ae60").encode(x="Day:N", y="Total Hours:Q", tooltip=["Day","Total Hours"]).properties(height=260), use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4 - LEADERBOARD
 # ══════════════════════════════════════════════════════════════════════════════
 with tab4:
-    st.markdown('<div class="section-header">UPH Leaderboard (Occupation Matched)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">UPH Leaderboard - Occupation Matched</div>', unsafe_allow_html=True)
     uph = st.session_state.uph_df
-
     if uph.empty:
-        st.info("Upload rate reports and process them to see the leaderboard.")
-        st.markdown("""
-        **Note:** UPH is calculated only for matched occupations:
-        - Picking report = Pickers only
-        - Packing report = Packers only
-        - Receiving report = Receivers only
-        - Putaway report = Putaway / Fillers only
-        """)
+        st.info("Upload rate reports and process to see the leaderboard.")
     else:
-        rtype_sel = st.selectbox("Report Type", ["All"] + sorted(uph["Report Type"].unique().tolist()))
-        disp_uph  = uph.copy()
-        if rtype_sel != "All":
-            disp_uph = disp_uph[disp_uph["Report Type"] == rtype_sel]
-        disp_uph = disp_uph.sort_values("UPH", ascending=False).reset_index(drop=True)
-        disp_uph.index += 1
-        show = disp_uph[[
-            "Name Surname","username","Company","Department","Occupation",
-            "Occupation Level","Weeks On Site","Report Type","Total Units","UPH"
-        ]].copy()
-        show.columns = ["Name","Username","Company","Department","Occupation","Level","Weeks","Type","Units","UPH"]
-        st.dataframe(show, use_container_width=True)
-
-        top20    = disp_uph.head(20)
-        lb_chart = alt.Chart(top20).mark_bar(
-            cornerRadiusTopLeft=5, cornerRadiusTopRight=5
-        ).encode(
-            x=alt.X("UPH:Q"),
-            y=alt.Y("Name Surname:N", sort="-x"),
-            color=alt.Color("Occupation Level:N",
-                scale=alt.Scale(
-                    domain=["Trainee","Starter","Competent","Master"],
-                    range=["#ffeaa7","#a8e6cf","#74b9ff","#fd79a8"]
-                )),
-            tooltip=["Name Surname","UPH","Report Type","Occupation","Company"]
-        ).properties(height=500, title="Top 20 Workers - Units Per Hour")
-        st.altair_chart(lb_chart, use_container_width=True)
+        rts = st.selectbox("Report Type", ["All"] + sorted(uph["Report Type"].unique().tolist()))
+        du  = uph[uph["Report Type"] == rts].copy() if rts != "All" else uph.copy()
+        du  = du.sort_values("UPH", ascending=False).reset_index(drop=True)
+        du.index += 1
+        sh = du[["Name Surname","username","Company","Department","Occupation","Occupation Level","Weeks On Site","Report Type","Total Units","Active Hours","UPH"]].copy()
+        sh.columns = ["Name","Username","Company","Department","Occupation","Level","Weeks","Type","Units","Active Hrs","UPH"]
+        st.dataframe(sh, use_container_width=True)
+        top20 = du.head(20)
+        st.altair_chart(alt.Chart(top20).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
+            x=alt.X("UPH:Q"), y=alt.Y("Name Surname:N", sort="-x"),
+            color=alt.Color("Occupation Level:N", scale=alt.Scale(domain=["Trainee","Starter","Competent","Master"], range=["#ffeaa7","#a8e6cf","#74b9ff","#fd79a8"])),
+            tooltip=["Name Surname","UPH","Occupation","Active Hours","Report Type"]
+        ).properties(height=500, title="Top 20 - Units Per Hour"), use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 5 - DAYS RATE DETAIL (same layout as CSV + employee details)
+# TAB 5 - DAYS RATE DETAIL
 # ══════════════════════════════════════════════════════════════════════════════
 with tab5:
     st.markdown('<div class="section-header">Days Rate Detail - Hourly Breakdown Per User</div>', unsafe_allow_html=True)
-
-    mh        = st.session_state.man_hours_df
-    rate_dfs  = st.session_state.rate_dfs
-    rate_meta = st.session_state.rate_meta
+    mh = st.session_state.man_hours_df; rate_dfs = st.session_state.rate_dfs; rate_meta = st.session_state.rate_meta
 
     if not rate_dfs:
-        st.info("Upload at least one rate report and click Process Files.")
+        st.info("Upload at least one rate report (.zip) and click Process Files.")
     else:
-        available_types = list(rate_meta.keys())
-        selected_type   = st.selectbox("Select Report Type", available_types)
-        rate_df         = next((d for d in rate_dfs if d["report_type"].iloc[0] == selected_type), None)
+        sel_type = st.selectbox("Report Type", list(rate_meta.keys()))
+        rate_df  = next((d for d in rate_dfs if d["report_type"].iloc[0] == sel_type), None)
 
         if rate_df is None:
             st.warning("No data for this report type.")
         else:
-            meta        = rate_meta.get(selected_type, {})
-            report_date = meta.get("date")
-            target_str  = meta.get("target", "")
-            hour_names  = meta.get("hour_names", [])
-            date_str    = report_date.strftime("%d %B %Y") if report_date else "N/A"
+            meta       = rate_meta.get(sel_type, {})
+            rpt_date   = meta.get("date")
+            target_str = meta.get("target","")
+            hours_list = meta.get("hours", [])
+            date_str   = rpt_date.strftime("%d %B %Y") if rpt_date else "N/A"
 
-            # Info banner
-            i1, i2, i3 = st.columns(3)
-            with i1: st.markdown(f'<div class="metric-card"><h3>Report Type</h3><p style="font-size:1.2rem">{selected_type}</p></div>', unsafe_allow_html=True)
-            with i2: st.markdown(f'<div class="metric-card"><h3>Report Date</h3><p style="font-size:1.2rem">{date_str}</p></div>', unsafe_allow_html=True)
-            with i3: st.markdown(f'<div class="metric-card"><h3>Target</h3><p style="font-size:1rem">{target_str if target_str else "N/A"}</p></div>', unsafe_allow_html=True)
+            i1,i2,i3 = st.columns(3)
+            with i1: st.markdown(f'<div class="metric-card"><h3>Report Type</h3><p style="font-size:1.2rem">{sel_type}</p></div>', unsafe_allow_html=True)
+            with i2: st.markdown(f'<div class="metric-card"><h3>Date</h3><p style="font-size:1.2rem">{date_str}</p></div>', unsafe_allow_html=True)
+            with i3: st.markdown(f'<div class="metric-card"><h3>Target</h3><p style="font-size:1rem">{target_str or "N/A"}</p></div>', unsafe_allow_html=True)
 
-            # Hour columns from the dataframe
-            hour_cols = [c for c in rate_df.columns if c.startswith("h_") and not c.startswith("h_col")]
+            hour_cols  = [c for c in rate_df.columns if c.startswith("h_")]
+            # Map h_7 -> "Hr 7", etc.
+            hour_display = {hc: f"Hr {hc[2:]}" for hc in hour_cols}
 
             # Filters
-            f1, f2, f3 = st.columns(3)
-            with f1: search_user = st.text_input("Search Username or Name", key="rate_search")
+            f1,f2,f3 = st.columns(3)
+            with f1: search_u = st.text_input("Search Username or Name", key="rs")
             with f2:
-                dept_opts = ["All"]
-                comp_opts = ["All"]
-                if mh is not None:
-                    dept_opts += sorted(mh["Department"].dropna().unique().tolist())
-                    comp_opts += sorted(mh["Company Name"].dropna().unique().tolist())
-                dept_f = st.selectbox("Department", dept_opts, key="rate_dept")
+                d_opts = ["All"] + (sorted(mh["Department"].dropna().unique().tolist()) if mh is not None else [])
+                dept_r = st.selectbox("Department", d_opts, key="rd")
             with f3:
-                comp_f = st.selectbox("Company", comp_opts, key="rate_comp")
+                c_opts = ["All"] + (sorted(mh["Company Name"].dropna().unique().tolist()) if mh is not None else [])
+                comp_r = st.selectbox("Company", c_opts, key="rc")
 
-            # ── Build table - same layout as CSV + details ───────────────────
+            # Build full table (same column order as original CSV + employee details)
             records = []
             for _, row in rate_df.iterrows():
-                username    = str(row["username"]).strip()
-                total_units = row["Total"]
-
-                # Defaults
+                username = str(row["username"]).strip()
+                # Employee details
                 full_name = username; company = "-"; dept = "-"
-                occupation = "-"; hire_date = "-"
-                weeks = 0; level = "-"; years_svc = "-"
-
+                occupation = "-"; hire_date = "-"; weeks = 0; level = "-"; years_svc = "-"
                 if mh is not None:
-                    mh_match = mh[mh["Cust-Oracle Username"].astype(str).str.strip().str.lower() == username.lower()]
-                    if not mh_match.empty:
-                        mhr        = mh_match.iloc[0]
+                    mm = mh[mh["Cust-Oracle Username"].astype(str).str.strip().str.lower() == username.lower()]
+                    if not mm.empty:
+                        mhr = mm.iloc[0]
                         full_name  = mhr.get("Name Surname", username)
                         company    = mhr.get("Company Name", "-")
                         dept       = mhr.get("Department", "-")
                         occupation = mhr.get("Occupation", "-")
-                        hire_date  = str(mhr.get("Hire Date", ""))[:10]
+                        hire_date  = str(mhr.get("Hire Date",""))[:10]
                         weeks      = mhr.get("Weeks On Site", 0)
-                        level      = mhr.get("Occupation Level", "Trainee")
-                        years_svc  = mhr.get("Years of Service (Yrs/Mths)", "-")
+                        level      = mhr.get("Occupation Level","Trainee")
+                        years_svc  = mhr.get("Years of Service (Yrs/Mths)","-")
 
                 rec = {
-                    "Username":         username,
-                    "Full Name":        full_name,
-                    "Company":          company,
-                    "Department":       dept,
-                    "Occupation":       occupation,
-                    "Level":            level,
-                    "Weeks On Site":    weeks,
-                    "Years of Service": years_svc,
-                    "Hire Date":        hire_date,
-                    "Total":            int(total_units),
+                    "Username": username, "Full Name": full_name, "Company": company,
+                    "Department": dept, "Occupation": occupation, "Level": level,
+                    "Weeks": weeks, "Hire Date": hire_date, "Service": years_svc,
+                    "Total Units": int(row["Total"]),
                 }
-
-                # Add hour columns exactly as they appear in CSV (Hr 2, Hr 3 ... Hr 14)
-                for hc, hn in zip(hour_cols, hour_names):
-                    if hn and hn != "":
-                        col_label = f"Hr {hn}"
-                    else:
-                        col_label = hc
+                # Add each hour column exactly like the CSV layout
+                for hc in hour_cols:
                     val = row.get(hc, 0)
-                    rec[col_label] = int(val) if not pd.isna(val) else 0
+                    rec[hour_display[hc]] = int(val) if not pd.isna(val) else 0
 
-                # Calculated fields
-                active_hours  = sum(1 for hc in hour_cols if row.get(hc, 0) > 0)
-                rec["Active Hrs"] = active_hours
-                rec["Avg UPH"]    = round(total_units / active_hours, 1) if active_hours > 0 else 0
-
+                active_hrs = int(row.get("_active_hrs", 0))
+                rec["Active Hrs"] = active_hrs
+                rec["UPH"]        = round(row["Total"] / active_hrs, 1) if active_hrs > 0 else 0
                 records.append(rec)
 
             result_df = pd.DataFrame(records)
 
             # Apply filters
-            if search_user:
-                result_df = result_df[
-                    result_df["Username"].str.lower().str.contains(search_user.lower()) |
-                    result_df["Full Name"].str.lower().str.contains(search_user.lower())
-                ]
-            if dept_f != "All":
-                result_df = result_df[result_df["Department"] == dept_f]
-            if comp_f != "All":
-                result_df = result_df[result_df["Company"] == comp_f]
-
-            result_df = result_df.sort_values("Total", ascending=False).reset_index(drop=True)
+            if search_u:
+                result_df = result_df[result_df["Username"].str.lower().str.contains(search_u.lower()) | result_df["Full Name"].str.lower().str.contains(search_u.lower())]
+            if dept_r != "All": result_df = result_df[result_df["Department"] == dept_r]
+            if comp_r != "All": result_df = result_df[result_df["Company"] == comp_r]
+            result_df = result_df.sort_values("Total Units", ascending=False).reset_index(drop=True)
 
             # Summary KPIs
             st.markdown('<div class="section-header">Summary</div>', unsafe_allow_html=True)
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Workers Active",  len(result_df))
-            k2.metric("Total Units",     f"{result_df['Total'].sum():,}")
-            k3.metric("Avg UPH",         f"{result_df['Avg UPH'].mean():.1f}")
-            k4.metric("Best UPH",        f"{result_df['Avg UPH'].max():.1f}")
+            k1,k2,k3,k4 = st.columns(4)
+            k1.metric("Workers Active", len(result_df))
+            k2.metric("Total Units",    f"{result_df['Total Units'].sum():,}")
+            k3.metric("Avg UPH",        f"{result_df['UPH'].mean():.1f}")
+            k4.metric("Best UPH",       f"{result_df['UPH'].max():.1f}")
 
-            # Full table (same layout as CSV + details)
-            st.markdown(f'<div class="section-header">All Workers - {selected_type} | {date_str}</div>', unsafe_allow_html=True)
-            st.markdown(f"**{len(result_df)} workers**")
+            # Full table - same layout as CSV
+            st.markdown(f'<div class="section-header">All Workers - {sel_type} | {date_str}</div>', unsafe_allow_html=True)
+            st.markdown(f"**{len(result_df)} workers | Hours shown: {', '.join(hours_list)}**")
             st.dataframe(result_df, use_container_width=True, hide_index=True)
 
-            # ── Individual drill-down ─────────────────────────────────────────
+            # ── Hourly detail for individual worker ──────────────────────────
             st.markdown("---")
-            st.markdown('<div class="section-header">Select a Worker - Hourly Breakdown</div>', unsafe_allow_html=True)
-            selected_u = st.selectbox("Select worker:", ["-- Select --"] + result_df["Username"].tolist(), key="rate_user_select")
+            st.markdown('<div class="section-header">Individual Worker - Hourly Detail Report</div>', unsafe_allow_html=True)
+            sel_user = st.selectbox("Select worker:", ["-- Select --"] + result_df["Username"].tolist(), key="rsel")
 
-            if selected_u != "-- Select --":
-                user_row  = result_df[result_df["Username"] == selected_u].iloc[0]
-                level_val = str(user_row.get("Level","Trainee"))
+            if sel_user != "-- Select --":
+                ur = result_df[result_df["Username"] == sel_user].iloc[0]
+                lv = str(ur.get("Level","Trainee"))
 
                 st.markdown(f"""
                 <div class="user-detail-card">
-                  <h2 style="margin:0 0 8px;">{user_row["Full Name"]}</h2>
-                  <div style="display:flex; flex-wrap:wrap; gap:20px; margin-top:8px;">
-                    <div><b>Username:</b> {user_row["Username"]}</div>
-                    <div><b>Company:</b> {user_row["Company"]}</div>
-                    <div><b>Department:</b> {user_row["Department"]}</div>
-                    <div><b>Occupation:</b> {user_row["Occupation"]}</div>
-                    <div><b>Hire Date:</b> {user_row["Hire Date"]}</div>
-                    <div><b>Years of Service:</b> {user_row["Years of Service"]}</div>
-                    <div><b>Weeks on Site:</b> {user_row["Weeks On Site"]}</div>
-                    <div><b>Level:</b> {badge_html(level_val)}</div>
+                  <h2 style="margin:0 0 10px;">{ur["Full Name"]}</h2>
+                  <div style="display:flex; flex-wrap:wrap; gap:20px;">
+                    <div><b>Username:</b> {ur["Username"]}</div>
+                    <div><b>Company:</b> {ur["Company"]}</div>
+                    <div><b>Department:</b> {ur["Department"]}</div>
+                    <div><b>Occupation:</b> {ur["Occupation"]}</div>
+                    <div><b>Hire Date:</b> {ur["Hire Date"]}</div>
+                    <div><b>Service:</b> {ur["Service"]}</div>
+                    <div><b>Weeks:</b> {ur["Weeks"]}</div>
+                    <div><b>Level:</b> {badge_html(lv)}</div>
                   </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-                hour_label_cols = [c for c in result_df.columns if c.startswith("Hr ")]
-                if hour_label_cols:
-                    st.markdown('<div class="section-header">Units Produced Per Hour</div>', unsafe_allow_html=True)
-                    hour_data = [{"Hour": hc, "Units": int(user_row.get(hc, 0))} for hc in hour_label_cols]
-                    hour_df   = pd.DataFrame(hour_data)
+                # Build hourly data
+                hr_cols_display = [c for c in result_df.columns if c.startswith("Hr ")]
+                hour_data = [{"Hour": hc, "Units": int(ur.get(hc, 0))} for hc in hr_cols_display]
+                hour_df   = pd.DataFrame(hour_data)
+                non_zero  = hour_df[hour_df["Units"] > 0]
 
-                    uh1, uh2, uh3, uh4 = st.columns(4)
-                    uh1.metric("Total Units",  f"{int(user_row['Total']):,}")
-                    uh2.metric("Active Hours", user_row["Active Hrs"])
-                    uh3.metric("Avg UPH",      user_row["Avg UPH"])
-                    non_zero = hour_df[hour_df["Units"] > 0]
-                    peak_h   = non_zero.loc[non_zero["Units"].idxmax(), "Hour"] if not non_zero.empty else "-"
-                    uh4.metric("Peak Hour", peak_h)
+                # KPIs
+                uh1,uh2,uh3,uh4 = st.columns(4)
+                uh1.metric("Total Units",  f"{int(ur['Total Units']):,}")
+                uh2.metric("Active Hours", ur["Active Hrs"])
+                uh3.metric("UPH",          ur["UPH"])
+                peak_h = non_zero.loc[non_zero["Units"].idxmax(),"Hour"] if not non_zero.empty else "-"
+                uh4.metric("Peak Hour", peak_h)
 
+                st.markdown('<div class="section-header">Units Produced Per Hour</div>', unsafe_allow_html=True)
+
+                # Hourly bar chart coloured by performance
+                if not hour_df.empty and hour_df["Units"].sum() > 0:
                     q66 = hour_df["Units"].quantile(0.66)
                     q33 = hour_df["Units"].quantile(0.33)
-                    bar = alt.Chart(hour_df).mark_bar(
-                        cornerRadiusTopLeft=5, cornerRadiusTopRight=5
-                    ).encode(
-                        x=alt.X("Hour:N", sort=None, title="Hour of Day"),
+                    bar = alt.Chart(hour_df).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
+                        x=alt.X("Hour:N", sort=None, title="Hour"),
                         y=alt.Y("Units:Q", title="Units Produced"),
                         color=alt.condition(
-                            alt.datum.Units >= q66,
-                            alt.value("#27ae60"),
-                            alt.condition(
-                                alt.datum.Units >= q33,
-                                alt.value("#f39c12"),
-                                alt.value("#e74c3c")
-                            )
+                            alt.datum.Units >= q66, alt.value("#27ae60"),
+                            alt.condition(alt.datum.Units >= q33, alt.value("#f39c12"), alt.value("#e74c3c"))
                         ),
                         tooltip=["Hour","Units"]
-                    ).properties(height=300, title=f"Hourly Units - {user_row['Full Name']} ({selected_type})")
+                    ).properties(height=320, title=f"{ur['Full Name']} - Hourly Production ({sel_type})")
                     st.altair_chart(bar, use_container_width=True)
 
-                    st.dataframe(non_zero.reset_index(drop=True), use_container_width=True, hide_index=True)
+                # Hourly table
+                st.markdown('<div class="section-header">Hourly Detail Table</div>', unsafe_allow_html=True)
+                hourly_tbl = hour_df.copy()
+                hourly_tbl["Status"] = hourly_tbl["Units"].apply(lambda v: "Active" if v > 0 else "No Activity")
+                st.dataframe(hourly_tbl, use_container_width=True, hide_index=True)
 
             # All workers UPH chart
-            st.markdown('<div class="section-header">Units Per Hour - All Workers</div>', unsafe_allow_html=True)
-            chart_data = result_df[result_df["Avg UPH"] > 0].sort_values("Avg UPH", ascending=False).head(30)
+            st.markdown('<div class="section-header">All Workers - Units Per Hour Chart</div>', unsafe_allow_html=True)
+            chart_data = result_df[result_df["UPH"] > 0].sort_values("UPH", ascending=False).head(30)
             if not chart_data.empty:
-                uph_bar = alt.Chart(chart_data).mark_bar(
-                    cornerRadiusTopLeft=5, cornerRadiusTopRight=5
-                ).encode(
-                    x=alt.X("Avg UPH:Q", title="Units Per Hour"),
-                    y=alt.Y("Full Name:N", sort="-x", title="Worker"),
-                    color=alt.Color("Level:N",
-                        scale=alt.Scale(
-                            domain=["Trainee","Starter","Competent","Master","-"],
-                            range=["#ffeaa7","#a8e6cf","#74b9ff","#fd79a8","#dfe6e9"]
-                        )),
-                    tooltip=["Full Name","Username","Company","Avg UPH","Total","Level","Active Hrs"]
-                ).properties(height=600, title=f"Top 30 by UPH - {selected_type}")
-                st.altair_chart(uph_bar, use_container_width=True)
+                st.altair_chart(alt.Chart(chart_data).mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5).encode(
+                    x=alt.X("UPH:Q", title="Units Per Hour"),
+                    y=alt.Y("Full Name:N", sort="-x"),
+                    color=alt.Color("Level:N", scale=alt.Scale(
+                        domain=["Trainee","Starter","Competent","Master","-"],
+                        range=["#ffeaa7","#a8e6cf","#74b9ff","#fd79a8","#dfe6e9"])),
+                    tooltip=["Full Name","Username","Occupation","UPH","Total Units","Active Hrs","Level"]
+                ).properties(height=600, title=f"Top 30 Workers by UPH - {sel_type}"), use_container_width=True)
