@@ -3,8 +3,9 @@ import pandas as pd
 import zipfile
 import io
 import json
+import requests
 import altair as alt
-from datetime import date, datetime
+from datetime import date
 
 st.set_page_config(page_title="DC Performance Dashboard", page_icon="📦", layout="wide")
 
@@ -33,10 +34,12 @@ st.markdown("""
     .user-detail-card { background:#f8fafc; border-radius:10px; padding:20px; border:1px solid #e2e8f0; margin-bottom:16px; }
     .section-header   { background:#eef2f7; padding:10px 16px; border-radius:8px; font-weight:700; color:#1e3a5f; margin:16px 0 10px; }
     .hist-card { background:white; border-radius:8px; padding:12px 16px; border:1px solid #e2e8f0; margin-bottom:8px; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+    .conn-ok  { background:#e8f5e9; border:1px solid #27ae60; border-radius:8px; padding:8px 12px; color:#1e8449; font-weight:600; }
+    .conn-err { background:#fdecea; border:1px solid #e74c3c; border-radius:8px; padding:8px 12px; color:#c0392b; font-weight:600; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Constants ─────────────────────────────────────────────────────────────────
+# ── Constants ──────────────────────────────────────────────────────────────────
 OCCUPATION_KEYWORDS = {
     "Picking":   ["picker"],
     "Packing":   ["packer","sealer","packing"],
@@ -50,7 +53,7 @@ LEVEL_COLORS = {
     "Master":    "background-color:#fd79a8; color:#6c1837; font-weight:600;",
 }
 
-# ─── Helpers ───────────────────────────────────────────────────────────────────
+# ── Styling helpers ────────────────────────────────────────────────────────────
 def color_level_col(val):
     return LEVEL_COLORS.get(str(val),"")
 
@@ -59,6 +62,134 @@ def style_with_levels(df):
         return df.style.map(color_level_col, subset=["Level"])
     return df.style
 
+def badge_html(level):
+    lvl = str(level).lower()
+    if lvl not in ["trainee","starter","competent","master"]: lvl = "trainee"
+    return f'<span class="badge-{lvl}">{level}</span>'
+
+# ── Supabase via REST API (no package needed) ──────────────────────────────────
+def get_sb_config():
+    try:
+        url = st.secrets["supabase"]["url"].rstrip("/")
+        key = st.secrets["supabase"]["key"].strip()
+        return url, key
+    except:
+        return None, None
+
+def sb_headers(key, prefer=None):
+    h = {
+        "apikey":        key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type":  "application/json",
+    }
+    if prefer:
+        h["Prefer"] = prefer
+    return h
+
+def test_connection():
+    url, key = get_sb_config()
+    if not url:
+        return False, "Supabase URL/Key not found in Streamlit secrets. Add them under Settings > Secrets."
+    if "your-project" in url:
+        return False, "You are still using the placeholder URL. Replace it with your actual Supabase project URL."
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/dc_daily_data",
+            headers=sb_headers(key),
+            params={"select":"report_date","limit":"1"},
+            timeout=10
+        )
+        if r.status_code == 200:
+            return True, f"Connected to Supabase successfully!"
+        elif r.status_code == 401:
+            return False, "Invalid API key. Check your anon key in Streamlit secrets."
+        elif r.status_code == 404:
+            return False, "Table dc_daily_data not found. Make sure you ran the SQL setup in Supabase."
+        else:
+            return False, f"HTTP {r.status_code} - {r.text[:200]}"
+    except requests.exceptions.ConnectionError:
+        return False, f"Cannot reach Supabase at: {url}. Check your URL in Streamlit secrets."
+    except requests.exceptions.Timeout:
+        return False, "Connection timed out. Supabase may be sleeping (free tier pauses after inactivity)."
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)[:200]}"
+
+def get_saved_dates():
+    url, key = get_sb_config()
+    if not url: return []
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/dc_daily_data",
+            headers=sb_headers(key),
+            params={"select":"report_date,notes,saved_at","order":"report_date.desc"},
+            timeout=10
+        )
+        if r.status_code == 200:
+            return r.json()
+        return []
+    except:
+        return []
+
+def load_snapshot_from_db(report_date_str):
+    url, key = get_sb_config()
+    if not url: return None
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/dc_daily_data",
+            headers=sb_headers(key),
+            params={"select":"snapshot","report_date":f"eq.{report_date_str}"},
+            timeout=20
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data:
+                return json.loads(data[0]["snapshot"])
+        return None
+    except:
+        return None
+
+def save_snapshot_to_db(report_date_str, snapshot_dict, notes=""):
+    url, key = get_sb_config()
+    if not url:
+        return False, "Supabase not configured. Add secrets in Streamlit Cloud settings."
+    try:
+        payload = {
+            "report_date": report_date_str,
+            "snapshot":    json.dumps(snapshot_dict),
+            "notes":       notes,
+        }
+        r = requests.post(
+            f"{url}/rest/v1/dc_daily_data",
+            headers=sb_headers(key, prefer="resolution=merge-duplicates,return=minimal"),
+            json=payload,
+            timeout=30
+        )
+        if r.status_code in [200, 201, 204]:
+            return True, "Saved successfully"
+        else:
+            return False, f"HTTP {r.status_code}: {r.text[:300]}"
+    except requests.exceptions.ConnectionError as e:
+        return False, f"Cannot connect to Supabase. Verify your URL in secrets. Detail: {str(e)[:150]}"
+    except requests.exceptions.Timeout:
+        return False, "Request timed out. Try again - Supabase free tier may need a moment to wake up."
+    except Exception as e:
+        return False, f"Error: {str(e)[:200]}"
+
+def delete_snapshot_from_db(report_date_str):
+    url, key = get_sb_config()
+    if not url: return False
+    try:
+        r = requests.delete(
+            f"{url}/rest/v1/dc_daily_data",
+            headers=sb_headers(key),
+            params={"report_date":f"eq.{report_date_str}"},
+            timeout=10
+        )
+        return r.status_code in [200,204]
+    except:
+        return False
+
+# ── Occupation helpers ─────────────────────────────────────────────────────────
 def matches_occupation(occupation, report_type):
     if not occupation or str(occupation).strip() in ["-","","nan"]: return False
     return any(kw in str(occupation).lower() for kw in OCCUPATION_KEYWORDS.get(report_type,[]))
@@ -74,11 +205,6 @@ def get_occupation_level(hire_date_raw):
     except:
         return "Trainee"
 
-def badge_html(level):
-    lvl = str(level).lower()
-    if lvl not in ["trainee","starter","competent","master"]: lvl = "trainee"
-    return f'<span class="badge-{lvl}">{level}</span>'
-
 def time_str_to_hrs(val):
     try:
         if pd.isna(val): return 0.0
@@ -90,66 +216,7 @@ def time_str_to_hrs(val):
     except:
         return 0.0
 
-# ─── Supabase ──────────────────────────────────────────────────────────────────
-def get_supabase():
-    try:
-        from supabase import create_client
-        url = st.secrets["supabase"]["url"]
-        key = st.secrets["supabase"]["key"]
-        return create_client(url, key)
-    except Exception as e:
-        return None
-
-def get_admin_password():
-    try:
-        return st.secrets["admin"]["password"]
-    except:
-        return "admin123"
-
-def get_saved_dates():
-    sb = get_supabase()
-    if sb is None: return []
-    try:
-        result = sb.table("dc_daily_data").select("report_date,notes,saved_at").order("report_date", desc=True).execute()
-        return result.data or []
-    except:
-        return []
-
-def load_snapshot_from_db(report_date_str):
-    sb = get_supabase()
-    if sb is None: return None
-    try:
-        result = sb.table("dc_daily_data").select("snapshot").eq("report_date", report_date_str).execute()
-        if result.data:
-            return json.loads(result.data[0]["snapshot"])
-        return None
-    except:
-        return None
-
-def save_snapshot_to_db(report_date_str, snapshot_dict, notes=""):
-    sb = get_supabase()
-    if sb is None: return False, "Supabase not configured"
-    try:
-        payload = {
-            "report_date": report_date_str,
-            "snapshot":    json.dumps(snapshot_dict),
-            "notes":       notes,
-        }
-        sb.table("dc_daily_data").upsert(payload, on_conflict="report_date").execute()
-        return True, "Saved successfully"
-    except Exception as e:
-        return False, str(e)
-
-def delete_snapshot_from_db(report_date_str):
-    sb = get_supabase()
-    if sb is None: return False
-    try:
-        sb.table("dc_daily_data").delete().eq("report_date", report_date_str).execute()
-        return True
-    except:
-        return False
-
-# ─── Snapshot serialize / deserialize ─────────────────────────────────────────
+# ── Snapshot helpers ───────────────────────────────────────────────────────────
 def df_to_json_safe(df):
     df2 = df.copy()
     for col in df2.columns:
@@ -180,7 +247,6 @@ def build_snapshot():
 def restore_snapshot(snap):
     if "man_hours" in snap:
         st.session_state.man_hours_df = pd.read_json(io.StringIO(snap["man_hours"]), orient="records")
-        # Re-apply datetime
         try:
             st.session_state.man_hours_df["Hire Date"] = pd.to_datetime(st.session_state.man_hours_df["Hire Date"], errors="coerce")
         except: pass
@@ -206,7 +272,7 @@ def restore_snapshot(snap):
     else:
         st.session_state.uph_df = pd.DataFrame()
 
-# ─── Parse Man Hours ───────────────────────────────────────────────────────────
+# ── Parse Man Hours ────────────────────────────────────────────────────────────
 def parse_man_hours(f):
     df_raw    = pd.read_excel(f, header=None)
     day_row   = df_raw.iloc[8].tolist()
@@ -243,7 +309,7 @@ def parse_man_hours(f):
         data[f"{d}_hrs"]=data[mh_col].apply(time_str_to_hrs) if mh_col in data.columns else 0.0
     return data, day_labels_found
 
-# ─── Parse Rate CSV ────────────────────────────────────────────────────────────
+# ── Parse Rate CSV ─────────────────────────────────────────────────────────────
 def parse_rate_csv(f, report_type):
     df_raw=pd.read_csv(f,header=None)
     header_row=None; date_val=None; target_val=None
@@ -290,8 +356,7 @@ def parse_rate_csv(f, report_type):
     data["_active_hrs"]=(data[hour_cols]>0).sum(axis=1)
     data["report_type"]=report_type
     data["report_date"]=date_val if date_val else pd.Timestamp.today().normalize()
-    sorted_hours=[hour_col_map[k] for k in sorted(hour_col_map.keys())]
-    return data,date_val,target_val,sorted_hours
+    return data,date_val,target_val,[hour_col_map[k] for k in sorted(hour_col_map.keys())]
 
 def load_zip_csv(uploaded_file, report_type):
     with zipfile.ZipFile(io.BytesIO(uploaded_file.read())) as z:
@@ -319,7 +384,7 @@ def compute_uph(rate_data, man_hours_data):
         })
     return pd.DataFrame(rows)
 
-# ─── Session state init ────────────────────────────────────────────────────────
+# ── Session state ──────────────────────────────────────────────────────────────
 for key, default in [
     ("man_hours_df",None),("day_labels",[]),("rate_dfs",[]),
     ("rate_meta",{}),("uph_df",pd.DataFrame()),
@@ -327,7 +392,7 @@ for key, default in [
 ]:
     if key not in st.session_state: st.session_state[key]=default
 
-# ─── Header ────────────────────────────────────────────────────────────────────
+# ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="main-header">
   <h1>DC Performance Dashboard</h1>
@@ -335,55 +400,84 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ─── Sidebar ───────────────────────────────────────────────────────────────────
+# ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
 
-    # ── Admin Login ────────────────────────────────────────────────────────────
+    # Admin login
     st.markdown("### Access")
     if not st.session_state.is_admin:
         with st.expander("Admin Login", expanded=False):
             pwd = st.text_input("Password", type="password", key="pwd_input")
             if st.button("Login", key="login_btn"):
-                if pwd == get_admin_password():
+                try:
+                    correct = st.secrets["admin"]["password"]
+                except:
+                    correct = "admin123"
+                if pwd == correct:
                     st.session_state.is_admin = True
                     st.rerun()
                 else:
                     st.error("Incorrect password")
         st.markdown('<div class="viewer-box">👁️ <b>Viewer Mode</b><br>Select a date below to view saved data.</div>', unsafe_allow_html=True)
     else:
-        st.markdown('<div class="admin-box">🔐 <b>Admin Mode</b></div>', unsafe_allow_html=True)
+        st.markdown('<div class="admin-box">🔐 <b>Admin Mode Active</b></div>', unsafe_allow_html=True)
         if st.button("Logout", key="logout_btn"):
             st.session_state.is_admin = False
             st.rerun()
 
     st.markdown("---")
 
-    # ── Date selector (visible to everyone) ───────────────────────────────────
+    # Connection status (admin only)
+    if st.session_state.is_admin:
+        with st.expander("Test Supabase Connection", expanded=False):
+            if st.button("Run Connection Test", key="test_conn"):
+                with st.spinner("Testing..."):
+                    ok, msg = test_connection()
+                if ok:
+                    st.markdown(f'<div class="conn-ok">Connected!</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="conn-err">Failed: {msg}</div>', unsafe_allow_html=True)
+            # Show current config (masked)
+            url, key = get_sb_config()
+            if url:
+                masked_url = url[:30] + "..." if len(url) > 30 else url
+                st.caption(f"URL: {masked_url}")
+            else:
+                st.warning("No Supabase secrets found. Add them in Streamlit Cloud settings.")
+
+    # Date selector for all users
     st.markdown("### View Saved Data")
     saved_dates = get_saved_dates()
     if saved_dates:
-        date_options = {d["report_date"]: f"{d['report_date']}  {d.get('notes','')}" for d in saved_dates}
-        selected_label = st.selectbox("Select Date to View", list(date_options.values()), key="date_selector")
+        date_options = {
+            d["report_date"]: f"{d['report_date']}  {d.get('notes','')}"
+            for d in saved_dates
+        }
+        selected_label = st.selectbox("Select Date", list(date_options.values()), key="date_selector")
         selected_date_str = [k for k,v in date_options.items() if v==selected_label][0]
-
-        if st.button("Load This Date", use_container_width=True, key="load_btn"):
-            snap = load_snapshot_from_db(selected_date_str)
+        if st.button("Load Selected Date", use_container_width=True, key="load_btn"):
+            with st.spinner("Loading..."):
+                snap = load_snapshot_from_db(selected_date_str)
             if snap:
                 restore_snapshot(snap)
                 st.session_state.loaded_date = selected_date_str
-                st.success(f"Loaded data for {selected_date_str}")
+                st.success(f"Loaded {selected_date_str}")
                 st.rerun()
             else:
-                st.error("Could not load data for this date.")
+                st.error("Could not load data. Check your Supabase connection.")
     else:
-        st.info("No saved dates yet. Admin must upload and save data first.")
+        url, _ = get_sb_config()
+        if not url:
+            st.warning("Supabase not configured yet. See Setup Guide tab.")
+        else:
+            st.info("No saved data yet.")
 
     if st.session_state.loaded_date:
-        st.markdown(f"**Currently viewing:** {st.session_state.loaded_date}")
+        st.success(f"Viewing: {st.session_state.loaded_date}")
 
     st.markdown("---")
 
-    # ── Admin: Upload and Process ──────────────────────────────────────────────
+    # Admin upload section
     if st.session_state.is_admin:
         st.markdown("### Upload Files")
         mh_file   = st.file_uploader("Auto Man Hours (.xlsx)", type=["xlsx"], key="mh")
@@ -397,25 +491,25 @@ with st.sidebar:
                 errors=[]; rate_frames=[]; rate_meta={}
                 if mh_file:
                     try:
-                        mh_df, day_lbls = parse_man_hours(mh_file)
-                        st.session_state.man_hours_df = mh_df
-                        st.session_state.day_labels   = day_lbls
+                        mh_df,day_lbls=parse_man_hours(mh_file)
+                        st.session_state.man_hours_df=mh_df
+                        st.session_state.day_labels=day_lbls
                         st.success(f"Man Hours: {len(mh_df)} employees")
                     except Exception as e:
                         errors.append(f"Man Hours: {e}")
-                for file_obj, rtype in [(pick_file,"Picking"),(pack_file,"Packing"),(put_file,"Putaway"),(recv_file,"Receiving")]:
-                    if file_obj:
+                for fo,rt in [(pick_file,"Picking"),(pack_file,"Packing"),(put_file,"Putaway"),(recv_file,"Receiving")]:
+                    if fo:
                         try:
-                            df,dv,target,hours=load_zip_csv(file_obj,rtype)
+                            df,dv,target,hours=load_zip_csv(fo,rt)
                             if not df.empty:
                                 rate_frames.append(df)
-                                rate_meta[rtype]={"date":dv,"target":target,"hours":hours}
-                                st.success(f"{rtype}: {len(df)} users")
+                                rate_meta[rt]={"date":dv,"target":target,"hours":hours}
+                                st.success(f"{rt}: {len(df)} users")
                         except Exception as e:
-                            errors.append(f"{rtype}: {e}")
+                            errors.append(f"{rt}: {e}")
                 if rate_frames:
-                    st.session_state.rate_dfs  = rate_frames
-                    st.session_state.rate_meta = rate_meta
+                    st.session_state.rate_dfs=rate_frames
+                    st.session_state.rate_meta=rate_meta
                     all_rates=pd.concat(rate_frames,ignore_index=True)
                     if st.session_state.man_hours_df is not None:
                         st.session_state.uph_df=compute_uph(all_rates,st.session_state.man_hours_df)
@@ -423,71 +517,66 @@ with st.sidebar:
                 for e in errors: st.error(e)
 
         st.markdown("---")
-
-        # ── Save Button ────────────────────────────────────────────────────────
         st.markdown("### Save Data")
         st.markdown('<div class="save-box">', unsafe_allow_html=True)
-        save_date  = st.date_input("Report Date", value=date.today(), key="save_date")
-        save_notes = st.text_input("Notes (optional)", placeholder="e.g. Monday shift", key="save_notes")
-
-        if st.button("💾 Save to Database", use_container_width=True, type="primary", key="save_btn"):
+        save_date  = st.date_input("Report Date (can backdate)", value=date.today(), key="save_date")
+        save_notes = st.text_input("Notes (optional)", placeholder="e.g. Monday morning shift", key="save_notes")
+        if st.button("Save to Database", use_container_width=True, type="primary", key="save_btn"):
             if st.session_state.man_hours_df is None and not st.session_state.rate_dfs:
-                st.warning("No data to save. Please process files first.")
+                st.warning("No processed data to save. Upload and process files first.")
             else:
-                snap = build_snapshot()
-                ok, msg = save_snapshot_to_db(str(save_date), snap, save_notes)
+                with st.spinner("Saving..."):
+                    snap  = build_snapshot()
+                    ok, msg = save_snapshot_to_db(str(save_date), snap, save_notes)
                 if ok:
-                    st.success(f"Saved data for {save_date}")
+                    st.success(f"Saved for {save_date}")
                     st.session_state.loaded_date = str(save_date)
                     st.rerun()
                 else:
                     st.error(f"Save failed: {msg}")
+                    st.info("Tip: Click Test Supabase Connection above to diagnose.")
         st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown("---")
-
-        # ── Delete saved date ──────────────────────────────────────────────────
         if saved_dates:
+            st.markdown("---")
             st.markdown("### Delete a Saved Date")
-            del_date = st.selectbox("Date to delete", [d["report_date"] for d in saved_dates], key="del_date")
+            del_date = st.selectbox("Date to delete",[d["report_date"] for d in saved_dates],key="del_date")
             if st.button("Delete", type="secondary", key="del_btn"):
                 if delete_snapshot_from_db(del_date):
-                    st.success(f"Deleted {del_date}")
-                    st.rerun()
+                    st.success(f"Deleted {del_date}"); st.rerun()
                 else:
                     st.error("Delete failed.")
 
     st.markdown("---")
-    st.markdown("**Level colours:**")
     st.markdown("🟡 Trainee = up to 2 weeks")
     st.markdown("🟢 Starter = more than 1 month")
     st.markdown("🔵 Competent = 3 months+")
     st.markdown("🩷 Master = 6 months+")
 
-# ─── Show currently loaded date banner ────────────────────────────────────────
+# ── Loaded date banner ─────────────────────────────────────────────────────────
 if st.session_state.loaded_date:
-    st.info(f"📅 Showing data for: **{st.session_state.loaded_date}**")
+    st.info(f"Showing data for: {st.session_state.loaded_date}")
 
-# ─── Tabs ──────────────────────────────────────────────────────────────────────
-tab1,tab2,tab3,tab4,tab5,tab6 = st.tabs([
-    "Overview","User Detail","Daily Hours","Leaderboard","Days Rate Detail","Save History"
+# ── Tabs ───────────────────────────────────────────────────────────────────────
+tab1,tab2,tab3,tab4,tab5,tab6,tab7 = st.tabs([
+    "Overview","User Detail","Daily Hours","Leaderboard",
+    "Days Rate Detail","Save History","Setup Guide"
 ])
 
 # ══ TAB 1: OVERVIEW ═══════════════════════════════════════════════════════════
 with tab1:
     mh=st.session_state.man_hours_df; day_labels=st.session_state.day_labels
     if mh is None:
-        st.info("No data loaded. Ask your admin to upload and save data, then select a date in the sidebar.")
+        st.info("No data loaded. Select a date in the sidebar, or ask the admin to upload and save data.")
     else:
         st.markdown('<div class="section-header">Workforce Level Breakdown</div>', unsafe_allow_html=True)
         lc=mh["Occupation Level"].value_counts()
         lv1,lv2,lv3,lv4,lv5=st.columns(5)
         with lv1: st.markdown(f'<div class="metric-card"><h3>Total Employees</h3><p>{len(mh):,}</p></div>',unsafe_allow_html=True)
-        with lv2: st.markdown(f'<div class="metric-card mc-yellow"><h3>🟡 Trainees</h3><p>{lc.get("Trainee",0)}</p></div>',unsafe_allow_html=True)
-        with lv3: st.markdown(f'<div class="metric-card mc-teal"><h3>🟢 Starters</h3><p>{lc.get("Starter",0)}</p></div>',unsafe_allow_html=True)
-        with lv4: st.markdown(f'<div class="metric-card mc-blue"><h3>🔵 Competent</h3><p>{lc.get("Competent",0)}</p></div>',unsafe_allow_html=True)
-        with lv5: st.markdown(f'<div class="metric-card mc-pink"><h3>🩷 Masters</h3><p>{lc.get("Master",0)}</p></div>',unsafe_allow_html=True)
-
+        with lv2: st.markdown(f'<div class="metric-card mc-yellow"><h3>Trainees</h3><p>{lc.get("Trainee",0)}</p></div>',unsafe_allow_html=True)
+        with lv3: st.markdown(f'<div class="metric-card mc-teal"><h3>Starters</h3><p>{lc.get("Starter",0)}</p></div>',unsafe_allow_html=True)
+        with lv4: st.markdown(f'<div class="metric-card mc-blue"><h3>Competent</h3><p>{lc.get("Competent",0)}</p></div>',unsafe_allow_html=True)
+        with lv5: st.markdown(f'<div class="metric-card mc-pink"><h3>Masters</h3><p>{lc.get("Master",0)}</p></div>',unsafe_allow_html=True)
         occ_df=mh["Occupation Level"].value_counts().reset_index(); occ_df.columns=["Level","Count"]
         col_map={"Trainee":"#ffeaa7","Starter":"#a8e6cf","Competent":"#74b9ff","Master":"#fd79a8"}
         st.altair_chart(alt.Chart(occ_df).mark_bar(cornerRadiusTopLeft=6,cornerRadiusTopRight=6).encode(
@@ -495,9 +584,8 @@ with tab1:
             color=alt.Color("Level:N",scale=alt.Scale(domain=list(col_map.keys()),range=list(col_map.values())),legend=None),
             tooltip=["Level","Count"]
         ).properties(height=220),use_container_width=True)
-
-        st.markdown('<div class="section-header">Daily Attendance</div>', unsafe_allow_html=True)
         if day_labels:
+            st.markdown('<div class="section-header">Daily Attendance</div>', unsafe_allow_html=True)
             selected_day=st.selectbox("Select Day",day_labels)
             in_col=f"{selected_day}_In"; out_col=f"{selected_day}_Out"; hrs_col=f"{selected_day}_hrs"
             if in_col in mh.columns:
@@ -507,15 +595,13 @@ with tab1:
                 present_df=pd.DataFrame(); absent_df=mh.copy()
             uph=st.session_state.uph_df
             a1,a2,a3,a4=st.columns(4)
-            total_hrs_day=present_df[hrs_col].sum() if hrs_col in present_df.columns and not present_df.empty else 0
-            avg_uph_val=uph["UPH"].mean() if not uph.empty else 0
+            thr=present_df[hrs_col].sum() if hrs_col in present_df.columns and not present_df.empty else 0
             with a1: st.markdown(f'<div class="metric-card mc-green"><h3>Signed In</h3><p>{len(present_df)}</p></div>',unsafe_allow_html=True)
             with a2: st.markdown(f'<div class="metric-card mc-red"><h3>Off / Absent</h3><p>{len(absent_df)}</p></div>',unsafe_allow_html=True)
-            with a3: st.markdown(f'<div class="metric-card"><h3>Hours Clocked</h3><p>{total_hrs_day:.1f} hrs</p></div>',unsafe_allow_html=True)
-            with a4: st.markdown(f'<div class="metric-card mc-orange"><h3>Avg UPH</h3><p>{avg_uph_val:.1f}</p></div>',unsafe_allow_html=True)
-
-            st.markdown(f'<div class="section-header">Signed In - {selected_day} ({len(present_df)} employees)</div>', unsafe_allow_html=True)
+            with a3: st.markdown(f'<div class="metric-card"><h3>Hours Clocked</h3><p>{thr:.1f} hrs</p></div>',unsafe_allow_html=True)
+            with a4: st.markdown(f'<div class="metric-card mc-orange"><h3>Avg UPH</h3><p>{uph["UPH"].mean():.1f if not uph.empty else 0}</p></div>',unsafe_allow_html=True)
             if not present_df.empty:
+                st.markdown(f'<div class="section-header">Signed In - {selected_day} ({len(present_df)} employees)</div>', unsafe_allow_html=True)
                 dept_ov=st.selectbox("Filter by Department",["All"]+sorted(mh["Department"].dropna().unique().tolist()),key="ov_dept")
                 sp=present_df[["Cust-Oracle Username","Name Surname","Company Name","Department","Occupation","Occupation Level","Weeks On Site"]].copy()
                 sp.columns=["Username","Full Name","Company","Department","Occupation","Level","Weeks"]
@@ -532,20 +618,19 @@ with tab1:
                         st.altair_chart(alt.Chart(dh).mark_bar(cornerRadiusTopLeft=5,cornerRadiusTopRight=5,color="#2d6a9f").encode(
                             x=alt.X("Hours:Q"),y=alt.Y("Department:N",sort="-x"),tooltip=["Department","Hours"]
                         ).properties(height=max(200,len(dh)*28)),use_container_width=True)
-
-            st.markdown(f'<div class="section-header">Off / Not Signed In - {selected_day} ({len(absent_df)} employees)</div>', unsafe_allow_html=True)
             if not absent_df.empty:
+                st.markdown(f'<div class="section-header">Off - {selected_day} ({len(absent_df)} employees)</div>', unsafe_allow_html=True)
                 sa=absent_df[["Cust-Oracle Username","Name Surname","Company Name","Department","Occupation","Occupation Level","Weeks On Site"]].copy()
                 sa.columns=["Username","Full Name","Company","Department","Occupation","Level","Weeks"]
                 st.dataframe(style_with_levels(sa.reset_index(drop=True)),use_container_width=True,hide_index=True)
 
 # ══ TAB 2: USER DETAIL ════════════════════════════════════════════════════════
 with tab2:
-    st.markdown('<div class="section-header">User Detail</div>', unsafe_allow_html=True)
     mh=st.session_state.man_hours_df; uph=st.session_state.uph_df; day_labels=st.session_state.day_labels
     if mh is None:
         st.info("No data loaded. Select a date in the sidebar.")
     else:
+        st.markdown('<div class="section-header">User Detail</div>', unsafe_allow_html=True)
         fc1,fc2,fc3=st.columns(3)
         with fc1: dept_f=st.selectbox("Department",["All"]+sorted(mh["Department"].dropna().unique().tolist()))
         with fc2: comp_f=st.selectbox("Company",   ["All"]+sorted(mh["Company Name"].dropna().unique().tolist()))
@@ -573,7 +658,7 @@ with tab2:
         if uname:
             um=mh[mh["Cust-Oracle Username"].astype(str).str.lower().str.strip()==uname.lower().strip()]
             if um.empty:
-                st.warning(f"No employee found: {uname}")
+                st.warning(f"No employee: {uname}")
             else:
                 row=um.iloc[0]; level=row.get("Occupation Level","Trainee")
                 st.markdown(f"""<div class="user-detail-card">
@@ -586,12 +671,10 @@ with tab2:
                 for d in day_labels:
                     v=row.get(f"{d}_hrs",0); v=0 if pd.isna(v) else float(v)
                     hrs_data.append({"Day":d,"Hours":v}); total_hrs+=v
-                hrs_df=pd.DataFrame(hrs_data)
                 st.markdown('<div class="section-header">Hours Worked</div>', unsafe_allow_html=True)
-                st.altair_chart(alt.Chart(hrs_df).mark_bar(cornerRadiusTopLeft=5,cornerRadiusTopRight=5,color="#2d6a9f").encode(x="Day:N",y="Hours:Q",tooltip=["Day","Hours"]).properties(height=220),use_container_width=True)
+                st.altair_chart(alt.Chart(pd.DataFrame(hrs_data)).mark_bar(cornerRadiusTopLeft=5,cornerRadiusTopRight=5,color="#2d6a9f").encode(x="Day:N",y="Hours:Q",tooltip=["Day","Hours"]).properties(height=220),use_container_width=True)
                 c1,c2=st.columns(2)
-                c1.metric("Total Hours",f"{total_hrs:.1f} hrs")
-                c2.metric("Avg Daily",f"{total_hrs/max(len(day_labels),1):.1f} hrs")
+                c1.metric("Total Hours",f"{total_hrs:.1f} hrs"); c2.metric("Avg Daily",f"{total_hrs/max(len(day_labels),1):.1f} hrs")
                 if not uph.empty:
                     uu=uph[uph["username"].str.lower()==uname.lower()]
                     if not uu.empty:
@@ -602,11 +685,11 @@ with tab2:
 
 # ══ TAB 3: DAILY HOURS ════════════════════════════════════════════════════════
 with tab3:
-    st.markdown('<div class="section-header">Daily and Weekly Hours Tracker</div>', unsafe_allow_html=True)
     mh=st.session_state.man_hours_df; day_labels=st.session_state.day_labels
     if mh is None:
         st.info("No data loaded. Select a date in the sidebar.")
     else:
+        st.markdown('<div class="section-header">Daily and Weekly Hours Tracker</div>', unsafe_allow_html=True)
         dept_sel=st.selectbox("Department",["All"]+sorted(mh["Department"].dropna().unique().tolist()),key="daily_dept")
         disp=mh[mh["Department"]==dept_sel].copy() if dept_sel!="All" else mh.copy()
         records=[]
@@ -627,11 +710,11 @@ with tab3:
 
 # ══ TAB 4: LEADERBOARD ════════════════════════════════════════════════════════
 with tab4:
-    st.markdown('<div class="section-header">UPH Leaderboard - Occupation Matched</div>', unsafe_allow_html=True)
     uph=st.session_state.uph_df
     if uph.empty:
-        st.info("No UPH data available for the selected date.")
+        st.info("No UPH data for the selected date.")
     else:
+        st.markdown('<div class="section-header">UPH Leaderboard - Occupation Matched</div>', unsafe_allow_html=True)
         rts=st.selectbox("Report Type",["All"]+sorted(uph["Report Type"].unique().tolist()))
         du=uph[uph["Report Type"]==rts].copy() if rts!="All" else uph.copy()
         du=du.sort_values("UPH",ascending=False).reset_index(drop=True); du.index+=1
@@ -647,11 +730,11 @@ with tab4:
 
 # ══ TAB 5: DAYS RATE DETAIL ═══════════════════════════════════════════════════
 with tab5:
-    st.markdown('<div class="section-header">Days Rate Detail - Hourly Breakdown Per User</div>', unsafe_allow_html=True)
     mh=st.session_state.man_hours_df; rate_dfs=st.session_state.rate_dfs; rate_meta=st.session_state.rate_meta
     if not rate_dfs:
-        st.info("No rate data available. Select a date in the sidebar.")
+        st.info("No rate data. Select a date in the sidebar.")
     else:
+        st.markdown('<div class="section-header">Days Rate Detail - Hourly Breakdown Per User</div>', unsafe_allow_html=True)
         sel_type=st.selectbox("Report Type",list(rate_meta.keys()))
         rate_df=next((d for d in rate_dfs if d["report_type"].iloc[0]==sel_type),None)
         if rate_df is None:
@@ -689,8 +772,7 @@ with tab5:
                      "Occupation":occupation,"Level":level,"Weeks":weeks,"Hire Date":hire_date,
                      "Service":years_svc,"Total Units":int(row["Total"])}
                 for hc in hour_cols:
-                    val=row.get(hc,0)
-                    rec[hour_display[hc]]=int(val) if not pd.isna(val) else 0
+                    val=row.get(hc,0); rec[hour_display[hc]]=int(val) if not pd.isna(val) else 0
                 active_hrs=int(row.get("_active_hrs",0))
                 rec["Active Hrs"]=active_hrs; rec["UPH"]=round(row["Total"]/active_hrs,1) if active_hrs>0 else 0
                 records.append(rec)
@@ -705,7 +787,7 @@ with tab5:
             st.markdown(f'<div class="section-header">All Workers - {sel_type} | {date_str}</div>',unsafe_allow_html=True)
             st.dataframe(style_with_levels(result_df),use_container_width=True,hide_index=True)
             st.markdown("---")
-            st.markdown('<div class="section-header">Individual Worker - Hourly Detail Report</div>',unsafe_allow_html=True)
+            st.markdown('<div class="section-header">Individual Worker - Hourly Detail</div>',unsafe_allow_html=True)
             sel_user=st.selectbox("Select worker:",["-- Select --"]+result_df["Username"].tolist(),key="rsel")
             if sel_user!="-- Select --":
                 ur=result_df[result_df["Username"]==sel_user].iloc[0]; lv=str(ur.get("Level","Trainee"))
@@ -714,8 +796,8 @@ with tab5:
                   <div style="display:flex;flex-wrap:wrap;gap:20px;">
                     <div><b>Username:</b> {ur["Username"]}</div><div><b>Company:</b> {ur["Company"]}</div>
                     <div><b>Dept:</b> {ur["Department"]}</div><div><b>Occupation:</b> {ur["Occupation"]}</div>
-                    <div><b>Hire Date:</b> {ur["Hire Date"]}</div><div><b>Service:</b> {ur["Service"]}</div>
-                    <div><b>Weeks:</b> {ur["Weeks"]}</div><div><b>Level:</b> {badge_html(lv)}</div>
+                    <div><b>Hire Date:</b> {ur["Hire Date"]}</div><div><b>Weeks:</b> {ur["Weeks"]}</div>
+                    <div><b>Level:</b> {badge_html(lv)}</div>
                   </div>
                 </div>""",unsafe_allow_html=True)
                 hr_cols_display=[c for c in result_df.columns if c.startswith("Hr ")]
@@ -724,23 +806,19 @@ with tab5:
                 uh1,uh2,uh3,uh4=st.columns(4)
                 uh1.metric("Total Units",f"{int(ur['Total Units']):,}"); uh2.metric("Active Hours",ur["Active Hrs"])
                 uh3.metric("UPH",ur["UPH"])
-                peak_h=non_zero.loc[non_zero["Units"].idxmax(),"Hour"] if not non_zero.empty else "-"
-                uh4.metric("Peak Hour",peak_h)
-                st.markdown('<div class="section-header">Units Produced Per Hour</div>',unsafe_allow_html=True)
+                uh4.metric("Peak Hour",non_zero.loc[non_zero["Units"].idxmax(),"Hour"] if not non_zero.empty else "-")
                 if hour_df["Units"].sum()>0:
                     q66=hour_df["Units"].quantile(0.66); q33=hour_df["Units"].quantile(0.33)
-                    bar=alt.Chart(hour_df).mark_bar(cornerRadiusTopLeft=5,cornerRadiusTopRight=5).encode(
+                    st.altair_chart(alt.Chart(hour_df).mark_bar(cornerRadiusTopLeft=5,cornerRadiusTopRight=5).encode(
                         x=alt.X("Hour:N",sort=None),y=alt.Y("Units:Q"),
                         color=alt.condition(alt.datum.Units>=q66,alt.value("#27ae60"),
                                alt.condition(alt.datum.Units>=q33,alt.value("#f39c12"),alt.value("#e74c3c"))),
                         tooltip=["Hour","Units"]
-                    ).properties(height=320,title=f"{ur['Full Name']} - Hourly Production ({sel_type})")
-                    st.altair_chart(bar,use_container_width=True)
+                    ).properties(height=320,title=f"{ur['Full Name']} - Hourly Production ({sel_type})"),use_container_width=True)
                 htbl=hour_df.copy(); htbl["Status"]=htbl["Units"].apply(lambda v:"Active" if v>0 else "No Activity")
                 st.dataframe(htbl,use_container_width=True,hide_index=True)
             cd=result_df[result_df["UPH"]>0].sort_values("UPH",ascending=False).head(30)
             if not cd.empty:
-                st.markdown('<div class="section-header">All Workers - Units Per Hour Chart</div>',unsafe_allow_html=True)
                 st.altair_chart(alt.Chart(cd).mark_bar(cornerRadiusTopLeft=5,cornerRadiusTopRight=5).encode(
                     x=alt.X("UPH:Q"),y=alt.Y("Full Name:N",sort="-x"),
                     color=alt.Color("Level:N",scale=alt.Scale(domain=["Trainee","Starter","Competent","Master","-"],range=["#ffeaa7","#a8e6cf","#74b9ff","#fd79a8","#dfe6e9"])),
@@ -756,6 +834,91 @@ with tab6:
     else:
         st.markdown(f"**{len(saved)} saved snapshots**")
         for d in saved:
-            saved_at=d.get("saved_at","")[:19] if d.get("saved_at") else ""
-            notes=d.get("notes","") or ""
-            st.markdown(f'<div class="hist-card"><b>📅 {d["report_date"]}</b>&nbsp;&nbsp;Saved: {saved_at}&nbsp;&nbsp;Notes: {notes if notes else "none"}</div>',unsafe_allow_html=True)
+            sat=d.get("saved_at","")[:19] if d.get("saved_at") else ""
+            notes=d.get("notes","") or "none"
+            st.markdown(f'<div class="hist-card"><b>Date: {d["report_date"]}</b>&nbsp;&nbsp;|&nbsp;&nbsp;Saved at: {sat}&nbsp;&nbsp;|&nbsp;&nbsp;Notes: {notes}</div>',unsafe_allow_html=True)
+
+# ══ TAB 7: SETUP GUIDE ════════════════════════════════════════════════════════
+with tab7:
+    st.markdown('<div class="section-header">Supabase Setup Guide</div>', unsafe_allow_html=True)
+    st.markdown("""
+**Step 1 - Create a free Supabase account**
+
+Go to https://supabase.com and sign up for free.
+Create a new project and wait for it to be ready (takes about 1 minute).
+
+---
+
+**Step 2 - Create the database table**
+
+In your Supabase project, click SQL Editor in the left menu.
+Paste and run this SQL:
+
+```sql
+create table dc_daily_data (
+  id bigserial primary key,
+  report_date date not null unique,
+  snapshot jsonb not null,
+  notes text,
+  saved_at timestamptz default now()
+);
+```
+
+---
+
+**Step 3 - Get your credentials**
+
+In your Supabase project go to:
+Settings (gear icon) > API
+
+Copy these two values:
+- Project URL  (looks like https://abcdefgh.supabase.co)
+- anon public key  (long string starting with eyJ...)
+
+---
+
+**Step 4 - Add secrets to Streamlit Cloud**
+
+In Streamlit Cloud go to your app > Settings > Secrets
+Paste this (replace with your real values):
+
+```
+[supabase]
+url = "https://your-project-id.supabase.co"
+key = "your-anon-public-key-here"
+
+[admin]
+password = "choose-a-strong-password"
+```
+
+Click Save. The app will restart automatically.
+
+---
+
+**Step 5 - Test the connection**
+
+Log in as Admin in the sidebar.
+Open the Test Supabase Connection section and click Run Connection Test.
+You should see: Connected to Supabase successfully!
+
+---
+
+**Common errors and fixes:**
+
+| Error | Fix |
+|---|---|
+| Name or service not known | Wrong URL in secrets - copy it exactly from Supabase |
+| HTTP 401 | Wrong API key - use the anon public key not the service key |
+| Table not found | Run the SQL in Step 2 |
+| Timed out | Free tier sleeps - wait 30 seconds and try again |
+""")
+
+    # Live connection check
+    st.markdown('<div class="section-header">Live Connection Status</div>', unsafe_allow_html=True)
+    if st.button("Check Connection Now", key="guide_test"):
+        with st.spinner("Checking..."):
+            ok, msg = test_connection()
+        if ok:
+            st.success(f"Connected! {msg}")
+        else:
+            st.error(f"Not connected: {msg}")
