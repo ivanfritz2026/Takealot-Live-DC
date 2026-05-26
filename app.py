@@ -159,42 +159,6 @@ def save_snapshot_to_db(report_date_str, snapshot_dict, notes=""):
             "notes":       notes,
         }
         r = requests.post(
-            f"{url}/rest/v1/dc_daily_data?on_conflict=report_date",
-            headers=sb_headers(key, prefer="resolution=merge-duplicates,return=minimal"),
-            json=payload,
-            timeout=30
-        )
-        if r.status_code in [200, 201, 204]:
-            return True, "Saved successfully"
-        elif r.status_code == 405:
-            return False, (
-                "HTTP 405 - Run this SQL in Supabase SQL Editor: "
-                "alter table dc_daily_data disable row level security; "
-                "grant all on dc_daily_data to anon;"
-            )
-        elif r.status_code == 401:
-            return False, "HTTP 401 - Invalid API key. Check your anon key in Streamlit secrets."
-        elif r.status_code == 403:
-            return False, (
-                "HTTP 403 - Permission denied. Run this in Supabase SQL Editor: "
-                "alter table dc_daily_data disable row level security;"
-            )
-        else:
-            return False, f"HTTP {r.status_code}: {r.text[:300]}"
-    except requests.exceptions.ConnectionError as e:
-        return False, f"Cannot connect to Supabase. Check your URL. Detail: {str(e)[:100]}"
-    except requests.exceptions.Timeout:
-        return False, "Timed out. Supabase free tier may be sleeping. Try again in 30 seconds."
-    except Exception as e:
-        return False, f"Error: {str(e)[:200]}"
-
-    try:
-        payload = {
-            "report_date": report_date_str,
-            "snapshot":    json.dumps(snapshot_dict),
-            "notes":       notes,
-        }
-        r = requests.post(
             f"{url}/rest/v1/dc_daily_data",
             headers=sb_headers(key, prefer="resolution=merge-duplicates,return=minimal"),
             json=payload,
