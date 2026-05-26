@@ -2,4 +2,4 @@ streamlit
 pandas
 altair
 openpyxl
-supabase
+requests
