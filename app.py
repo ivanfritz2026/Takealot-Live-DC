@@ -599,7 +599,8 @@ with tab1:
             with a1: st.markdown(f'<div class="metric-card mc-green"><h3>Signed In</h3><p>{len(present_df)}</p></div>',unsafe_allow_html=True)
             with a2: st.markdown(f'<div class="metric-card mc-red"><h3>Off / Absent</h3><p>{len(absent_df)}</p></div>',unsafe_allow_html=True)
             with a3: st.markdown(f'<div class="metric-card"><h3>Hours Clocked</h3><p>{thr:.1f} hrs</p></div>',unsafe_allow_html=True)
-            with a4: st.markdown(f'<div class="metric-card mc-orange"><h3>Avg UPH</h3><p>{uph["UPH"].mean():.1f if not uph.empty else 0}</p></div>',unsafe_allow_html=True)
+            avg_uph_val = round(uph["UPH"].mean(), 1) if not uph.empty else 0
+with a4: st.markdown(f'<div class="metric-card mc-orange"><h3>Avg UPH</h3><p>{avg_uph_val}</p></div>', unsafe_allow_html=True)
             if not present_df.empty:
                 st.markdown(f'<div class="section-header">Signed In - {selected_day} ({len(present_df)} employees)</div>', unsafe_allow_html=True)
                 dept_ov=st.selectbox("Filter by Department",["All"]+sorted(mh["Department"].dropna().unique().tolist()),key="ov_dept")
